@@ -4,19 +4,22 @@ Procedural vector motion graphics runtime for Unity. Built for AE-style shape-la
 expressiveness with first-class Unity Animator / Timeline integration on both UGUI
 and world-space renderers.
 
-## Features (0.9.0)
+## Features (0.10.0)
 
 - Path + Node data model with cubic Bezier (`inTangent` / `outTangent` per node), tessellated upstream of every modifier
 - Procedural CPU mesh generation
+- **ShapeStack** — up to 4 primitive shapes blended with arc-length resampling
+  and per-slot intensity weights. Replaces the old "single shape + Morph
+  modifier" pair; every slot is symmetric.
 - Stroke
   - Inner / Center / Outer alignment
   - Cap: Butt / Square / Round
   - Join: Miter (with limit) / Bevel / Round
 - Fill with self-contained ear-clipping triangulator (concave-safe)
-- Modifiers (fixed order: Morph → RoundCorner → Trim)
-  - Path Morph — blend toward a second `PrimitiveShapeSource`
+- Modifiers (fixed order: RoundCorner → Trim)
   - Round Corner — real path-level geometry rounding with adjacent-corner clamping
-  - Trim Path — start / end / offset with closed-path wrap support
+  - Trim Path — start / end / offset with closed-path wrap support and
+    open-path safe clamp (no flicker when offset crosses the end)
 - Primitives: Circle, Ellipse, Rectangle, Rounded Rectangle, Polygon, Free Path
 - UGUI renderer (`VectorImageGraphic`) — `MaskableGraphic`, works with `Mask` / `RectMask2D`
 - World renderer (`VectorSpriteRenderer`) — `MeshFilter` + `MeshRenderer`
@@ -24,7 +27,9 @@ and world-space renderers.
   produces a `VMGShapeAsset` that either renderer can reference. Supports
   the full path `d` grammar, basic shape elements, viewBox, transforms,
   and fill/stroke styling.
-- SceneView handles: drag-edit FreePath nodes and bezier tangents
+- SceneView handles: drag-edit FreePath nodes and bezier tangents on the
+  active stack slot. A small overlay in the upper-left of the SceneView
+  picks which slot the handles target.
 - Custom shader material and texture per renderer
   - UGUI: `Material` slot + `Texture` (bound via `Graphic.mainTexture`, no material instancing)
   - World: `Material` slot + `Texture` (bound via `MaterialPropertyBlock`, shared material preserved)
@@ -63,6 +68,10 @@ vectorImage.DOFade(0f, 0.4f);
 vectorImage.DOTrim(1f, 0.8f).SetEase(Ease.OutCubic);
 vectorImage.DOStrokeColor(Color.red, 0.5f);
 await vectorImage.DOSize(new Vector2(300, 300), 0.6f).AsyncWaitForCompletion();
+
+// Cross-fade between two shapes:
+vectorImage.DOSlotIntensity(1, 1f, 0.8f);    // bring slot 1 in
+vectorImage.DOSlotIntensity(0, 0f, 0.8f);    // fade slot 0 out
 ```
 
 The integration adds no hard dependency to the core package — projects
@@ -81,10 +90,13 @@ so Animator-driven writes always re-tessellate the mesh.
 Every inspector field is exposed as a struct member so the Animation
 window's "Add Property" tree walks into it. The full surface:
 
-- **Procedural shape** — `kind`, `center.x/y`, `size.x/y`, `sides`,
-  `cornerRadius`, `circleSegments`, `bezierSamplesPerSegment`,
+- **ShapeStack** — `resampleCount`, plus four slots:
+  - `m_Slot0..m_Slot3.intensity` — weight in the blend (0 = inactive)
+  - `m_Slot0..m_Slot3.shape.*` — full PrimitiveShapeSource surface
+- **Procedural shape (per slot)** — `kind`, `center.x/y`, `size.x/y`,
+  `sides`, `cornerRadius`, `circleSegments`, `bezierSamplesPerSegment`,
   `freeClosed`, `activeNodeCount`
-- **FreePath nodes** — per-slot `m_Node00.position.x/y`,
+- **FreePath nodes (per slot)** — per-flat-slot `m_Node00.position.x/y`,
   `m_Node00.inTangent.x/y`, `m_Node00.outTangent.x/y`, `m_Node00.type`
   ... up to `m_Node63`. Bind them in the Animation window or just drag
   handles in the SceneView while Record is on — each drag becomes a
@@ -92,15 +104,26 @@ window's "Add Property" tree walks into it. The full surface:
 - **Stroke** — `enabled`, `color.rgba`, `width`, `alignment`, `cap`,
   `join`, `miterLimit`
 - **Fill** — `enabled`, `color.rgba`
-- **Modifiers** — every `[SerializeField]` field on `PathMorphModifier`,
-  `RoundCornerModifier`, `TrimPathModifier` (including their `enabled`
-  flag, so a modifier can be toggled on/off mid-clip)
-- **Morph target** — the morph modifier wraps another
-  `PrimitiveShapeSource`, so `m_Morph.target.size.x`, `m_Morph.target.m_Node00.position.x`,
-  etc. are individually keyframable
+- **Modifiers** — every `[SerializeField]` field on `RoundCornerModifier`
+  and `TrimPathModifier` (including their `enabled` flag, so a modifier
+  can be toggled on/off mid-clip)
 - **UGUI renderer** — `FitToRect`, `Graphic.color`
 - **World renderer** — `Tint`, `SvgUnitsPerWorldUnit`, `SortingLayerID`,
   `SortingOrder`
+
+### Multi-shape blending
+
+The ShapeStack replaces the old PathMorphModifier:
+
+1. Put your "from" shape in slot 0 (intensity 1).
+2. Put your "to" shape in slot 1 (intensity 0).
+3. Keyframe `m_Slot1.intensity` from 0 → 1 — the renderer
+   arc-length-resamples both paths and lerps index-by-index.
+4. Optionally fade slot 0 out in parallel so the result is the pure
+   destination at the end of the clip.
+
+All four slots are weighted equally; there's no "base" slot. Three or
+four active slots produce a smooth N-way blend.
 
 ### FreePath node animation
 
@@ -109,11 +132,10 @@ Edit nodes normally — the SceneView handles route every drag through
 each drag as a keyframe at the playhead. No sync step, no parallel
 surface.
 
-When both the base shape and a `PathMorphModifier.target` are
-FreePaths, an "Active Shape" overlay appears in the upper-left of the
-SceneView. Pick **Base Shape** or **Morph Target** to decide which
-set of nodes the handles operate on — base/target nodes would
-otherwise visually overlap.
+The overlay in the upper-left of the SceneView picks which stack slot's
+nodes the handles operate on. Slots that aren't FreePaths show no
+handles when selected (their `kind` field is what decides — Circle,
+Rectangle, etc. don't have node handles).
 
 The only Unity AnimationClip limitation that bites:
 
@@ -121,10 +143,8 @@ The only Unity AnimationClip limitation that bites:
   appearing mid-clip use whatever data is sitting in those previously
   unused slot fields — they don't blend in from the previous frame's
   visible nodes. For shape transitions where the visual node count
-  needs to grow smoothly (triangle → pentagon), animate
-  `PathMorphModifier.progress` against a second shape instead. The
-  modifier arc-length-resamples both paths to a common vertex count
-  before lerping.
+  needs to grow smoothly (triangle → pentagon), put each shape in its
+  own ShapeStack slot and animate the intensities instead.
 
 ### NOT keyframable from a standard AnimationClip
 
@@ -135,6 +155,4 @@ The only Unity AnimationClip limitation that bites:
 
 ## Roadmap
 
-Deferred work is tracked in [BACKLOG.md](BACKLOG.md). Next up: DOTween / UniTask
-interop (`DOFade`, `DOColor`, `DOSize`, `DOTrim`, …) shipped as an optional
-assembly that compiles only when DOTween is present.
+Deferred work is tracked in [BACKLOG.md](BACKLOG.md).

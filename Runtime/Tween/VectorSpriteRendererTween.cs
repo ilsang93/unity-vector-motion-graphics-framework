@@ -1,6 +1,7 @@
 #if VMG_DOTWEEN
 using DG.Tweening;
 using UnityEngine;
+using VMG.Core;
 using VMG.World;
 
 namespace VMG.Tween
@@ -34,21 +35,36 @@ namespace VMG.Tween
             return DOTween.To(() => r.Stroke.width, v => r.Stroke.width = v, endValue, duration).SetTarget(r);
         }
 
+        // -- Shape (slot 0) ----------------------------------------------
+
         public static Tweener DOSize(this VectorSpriteRenderer r, Vector2 endValue, float duration)
         {
-            return DOTween.To(() => r.Shape.size, v => r.Shape.size = v, endValue, duration).SetTarget(r);
+            return DOTween.To(() => r.ShapeStack.m_Slot0.shape.size,
+                              v => r.ShapeStack.m_Slot0.shape.size = v,
+                              endValue, duration).SetTarget(r);
         }
 
         public static Tweener DOCornerRadius(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            return DOTween.To(() => r.Shape.cornerRadius, v => r.Shape.cornerRadius = v, endValue, duration).SetTarget(r);
+            return DOTween.To(() => r.ShapeStack.m_Slot0.shape.cornerRadius,
+                              v => r.ShapeStack.m_Slot0.shape.cornerRadius = v,
+                              endValue, duration).SetTarget(r);
         }
 
-        // Modifiers are structs now, so the local `var trim = ...`
-        // pattern would copy and the tween setter would mutate that
-        // copy. Each lambda reaches through `r.XModifier` every call so
-        // the ref-returning property forwards the write to the real
-        // field.
+        // -- ShapeStack slot intensity (replaces the old DOMorph) ---------
+
+        public static Tweener DOSlotIntensity(this VectorSpriteRenderer r, int slotIndex, float endValue, float duration)
+        {
+            slotIndex = Mathf.Clamp(slotIndex, 0, ShapeStack.MaxSlots - 1);
+            return DOTween.To(() => r.ShapeStack.GetSlot(slotIndex).intensity, v =>
+            {
+                var slot = r.ShapeStack.GetSlot(slotIndex);
+                slot.intensity = v;
+                r.ShapeStack.SetSlot(slotIndex, slot);
+            }, endValue, duration).SetTarget(r);
+        }
+
+        // -- Modifiers ----------------------------------------------------
 
         public static Tweener DOTrim(this VectorSpriteRenderer r, float endValue, float duration)
         {
@@ -72,12 +88,6 @@ namespace VMG.Tween
         {
             r.RoundCornerModifier.enabled = true;
             return DOTween.To(() => r.RoundCornerModifier.radius, v => r.RoundCornerModifier.radius = v, endValue, duration).SetTarget(r);
-        }
-
-        public static Tweener DOMorph(this VectorSpriteRenderer r, float endValue, float duration)
-        {
-            r.MorphModifier.enabled = true;
-            return DOTween.To(() => r.MorphModifier.progress, v => r.MorphModifier.progress = v, endValue, duration).SetTarget(r);
         }
     }
 }

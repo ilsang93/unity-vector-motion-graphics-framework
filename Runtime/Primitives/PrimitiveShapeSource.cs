@@ -27,7 +27,7 @@ namespace VMG.Core
     {
         public const int MaxFreeNodes = 64;
 
-        [Tooltip("Primitive type. Keyframable but switching mid-animation snaps mesh topology — prefer PathMorphModifier for shape transitions.")]
+        [Tooltip("Primitive type. Keyframable but switching mid-animation snaps mesh topology — prefer blending between ShapeStack slots for smooth transitions.")]
         public ShapeKind kind;
         [Tooltip("Shape center in local space. Keyframable.")]
         public Vector2 center;

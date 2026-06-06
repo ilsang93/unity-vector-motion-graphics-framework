@@ -118,47 +118,44 @@ namespace VMG.EditorTools
             return i < 10 ? "m_Node0" + i : "m_Node" + i;
         }
 
-        /// SceneView overlay that lets the user pick which Shape's
-        /// nodes the handles operate on. Without this, base shape and
-        /// morph-target handles would overlap and become ambiguous.
-        ///
-        /// Returns the chosen index (0 = base shape, 1 = morph target).
-        /// `morphTargetAvailable` controls whether the Morph option is
-        /// enabled; pass false when the morph modifier is disabled or
-        /// its target is not a FreePath.
-        public static int DrawActiveShapeOverlay(int current, bool morphTargetAvailable)
+        /// SceneView overlay that lets the user pick which ShapeStack
+        /// slot the handles operate on. All 4 slots are always
+        /// selectable — even at intensity 0 — so the user can edit a
+        /// slot before turning it on. The current intensity is shown
+        /// next to each button so it's obvious which slots actually
+        /// contribute to the rendered shape.
+        public static int DrawSlotOverlay(int current, ref ShapeStack stack)
         {
             Handles.BeginGUI();
             try
             {
-                const float W = 220f, H = 44f, MARGIN = 8f;
+                const float W = 280f, H = 44f, MARGIN = 8f;
                 Rect box = new Rect(MARGIN, MARGIN, W, H);
                 GUI.Box(box, GUIContent.none, EditorStyles.helpBox);
 
                 GUI.Label(new Rect(box.x + 6f, box.y + 2f, W - 12f, 16f),
-                    "VMG · Edit FreePath", EditorStyles.miniBoldLabel);
+                    "VMG · Edit FreePath (ShapeStack slot)", EditorStyles.miniBoldLabel);
 
-                Rect baseBtn = new Rect(box.x + 6f, box.y + 20f, (W - 18f) * 0.5f, 18f);
-                Rect morphBtn = new Rect(baseBtn.xMax + 6f, baseBtn.y, baseBtn.width, baseBtn.height);
-
-                if (GUI.Toggle(baseBtn, current == 0, "Base Shape", EditorStyles.miniButtonLeft) && current != 0)
-                    current = 0;
-
-                using (new EditorGUI.DisabledScope(!morphTargetAvailable))
+                float btnW = (W - 12f - 3f * 4f) / ShapeStack.MaxSlots;
+                for (int i = 0; i < ShapeStack.MaxSlots; i++)
                 {
-                    if (GUI.Toggle(morphBtn, current == 1, "Morph Target", EditorStyles.miniButtonRight) && current != 1)
-                        current = 1;
-                }
+                    Rect btn = new Rect(box.x + 6f + i * (btnW + 4f), box.y + 20f, btnW, 18f);
+                    GUIStyle style;
+                    if (ShapeStack.MaxSlots == 1) style = EditorStyles.miniButton;
+                    else if (i == 0) style = EditorStyles.miniButtonLeft;
+                    else if (i == ShapeStack.MaxSlots - 1) style = EditorStyles.miniButtonRight;
+                    else style = EditorStyles.miniButtonMid;
 
-                // Fall back to Base when Morph becomes unavailable so
-                // the user isn't stuck editing a hidden target.
-                if (current == 1 && !morphTargetAvailable) current = 0;
+                    var slot = stack.GetSlot(i);
+                    string label = "S" + i + " (" + slot.intensity.ToString("0.##") + ")";
+                    if (GUI.Toggle(btn, current == i, label, style) && current != i) current = i;
+                }
             }
             finally
             {
                 Handles.EndGUI();
             }
-            return current;
+            return Mathf.Clamp(current, 0, ShapeStack.MaxSlots - 1);
         }
     }
 }

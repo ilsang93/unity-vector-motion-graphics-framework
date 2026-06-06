@@ -34,16 +34,19 @@ specifically needs it.
 ## [Phase 3] User-reorderable Modifier Stack
 
 ### Requirement
-Today the renderer hardcodes the modifier order (Morph → RoundCorner → Trim)
+Today the renderer hardcodes the modifier order (RoundCorner → Trim)
 in fixed serialized slots. AE shape layers let users add / reorder / disable
 arbitrary operators (Offset Paths, Repeater, Wiggle Transform, Pucker & Bloat…).
 Promote VMG's pipeline to that model.
+
+Note: cross-shape morphing is no longer a modifier — that's the ShapeStack's
+job. Modifiers operate on the path that comes out of the stack's blend.
 
 ### Design
 - Serialize a `[SerializeReference]` `List<IPathModifier>` on the renderers
   alongside (or replacing) the fixed slots.
 - Custom inspector with `ReorderableList` for drag-to-reorder and
-  add-via-popup ("Add Modifier ▸ Round Corner / Trim Path / Morph / …").
+  add-via-popup ("Add Modifier ▸ Round Corner / Trim Path / Offset Paths / …").
 - Animator integration: each modifier inside the array still has stable
   field paths (`m_Modifiers.Array.data[0].radius`), but reordering invalidates
   bindings — so document that reordering should happen at authoring time, not

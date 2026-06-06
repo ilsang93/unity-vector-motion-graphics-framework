@@ -15,12 +15,11 @@ namespace VMG.UI
     {
         [Tooltip("Optional SVG asset. When set, procedural shape/modifiers/style are bypassed. Object reference: NOT keyframable from AnimationClip — swap via script.")]
         [SerializeField] private VMGShapeAsset m_SvgAsset;
-        [SerializeField] private PrimitiveShapeSource m_Shape = PrimitiveShapeSource.Default();
+        [SerializeField] private ShapeStack m_ShapeStack = ShapeStack.Default();
         [SerializeField] private StrokeStyle m_Stroke = StrokeStyle.Default;
         [SerializeField] private FillStyle m_Fill = new FillStyle { enabled = true, color = Color.white };
-        [SerializeField] private PathMorphModifier m_Morph = new PathMorphModifier();
-        [SerializeField] private RoundCornerModifier m_RoundCorners = new RoundCornerModifier();
-        [SerializeField] private TrimPathModifier m_Trim = new TrimPathModifier();
+        [SerializeField] private RoundCornerModifier m_RoundCorners = RoundCornerModifier.Default();
+        [SerializeField] private TrimPathModifier m_Trim = TrimPathModifier.Default();
         [Tooltip("Stretch the shape to fill the RectTransform. Keyframable.")]
         [SerializeField] private bool m_FitToRect = true;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Object reference: NOT keyframable from AnimationClip — swap via script.")]
@@ -30,10 +29,9 @@ namespace VMG.UI
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
 
         public VMGShapeAsset SvgAsset { get => m_SvgAsset; set { m_SvgAsset = value; SetVerticesDirty(); } }
-        public ref PrimitiveShapeSource Shape => ref m_Shape;
+        public ref ShapeStack ShapeStack => ref m_ShapeStack;
         public ref StrokeStyle Stroke => ref m_Stroke;
         public ref FillStyle Fill => ref m_Fill;
-        public ref PathMorphModifier MorphModifier => ref m_Morph;
         public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
         public ref TrimPathModifier TrimModifier => ref m_Trim;
         public Texture Texture { get => m_Texture; set { m_Texture = value; SetMaterialDirty(); } }
@@ -81,23 +79,26 @@ namespace VMG.UI
 
             if (m_FitToRect)
             {
+                // Fit applies to every slot so the blend stays in sync
+                // with the RectTransform — different per-slot sizes
+                // would break the index-by-index lerp visually.
                 Rect r = rectTransform.rect;
-                m_Shape.center = r.center;
-                m_Shape.size = r.size;
+                m_ShapeStack.m_Slot0.shape.center = r.center; m_ShapeStack.m_Slot0.shape.size = r.size;
+                m_ShapeStack.m_Slot1.shape.center = r.center; m_ShapeStack.m_Slot1.shape.size = r.size;
+                m_ShapeStack.m_Slot2.shape.center = r.center; m_ShapeStack.m_Slot2.shape.size = r.size;
+                m_ShapeStack.m_Slot3.shape.center = r.center; m_ShapeStack.m_Slot3.shape.size = r.size;
             }
 
-            // Modifier order: Morph -> RoundCorner -> Trim.
-            // Morph first so corner rounding sees the blended path.
-            // Trim last because it slices the resolved geometry.
+            // Pipeline: ShapeStack -> RoundCorner -> Trim. Fill skips
+            // Trim so the closed shape survives the slice.
             //
             // Direct calls (not an IPathModifier list) so the struct
             // modifiers don't get boxed every frame.
 
-            // Fill pipeline: omit Trim so the closed shape survives.
+            // Fill pipeline.
             m_Pipeline.workingPath.Clear();
             m_Pipeline.mesh.Clear();
-            m_Shape.Build(m_Pipeline.workingPath);
-            if (m_Morph.Enabled) m_Morph.Apply(m_Pipeline.workingPath);
+            m_ShapeStack.Build(m_Pipeline.workingPath);
             if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
             if (m_Fill.enabled)
             {
@@ -106,11 +107,10 @@ namespace VMG.UI
                 FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Pipeline.mesh);
             }
 
-            // Stroke pipeline: full modifier stack including trim.
+            // Stroke pipeline: full modifier chain including trim.
             m_StrokeBuf.Clear();
             m_Pipeline.workingPath.Clear();
-            m_Shape.Build(m_Pipeline.workingPath);
-            if (m_Morph.Enabled) m_Morph.Apply(m_Pipeline.workingPath);
+            m_ShapeStack.Build(m_Pipeline.workingPath);
             if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
             if (m_Trim.Enabled) m_Trim.Apply(m_Pipeline.workingPath);
             if (m_Stroke.enabled)
@@ -177,7 +177,8 @@ namespace VMG.UI
 
                 // Bezier-tessellate + apply uniform fit transform.
                 BezierTessellator.Tessellate(sub.nodes, sub.closed,
-                    Mathf.Max(4, m_Shape.bezierSamplesPerSegment > 0 ? m_Shape.bezierSamplesPerSegment : 16),
+                    Mathf.Max(4, m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment > 0
+                                 ? m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment : 16),
                     m_SvgPath);
                 for (int i = 0; i < m_SvgPath.nodes.Count; i++)
                 {

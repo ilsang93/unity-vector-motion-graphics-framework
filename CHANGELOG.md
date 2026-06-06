@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.10.0] - 2026-06-07
+
+### Changed (breaking)
+- **The renderer's "shape" surface is now a `ShapeStack` of 4
+  PrimitiveShapeSource slots with per-slot intensities.** Slots are
+  weighted symmetrically — there is no special base slot. The Build
+  pipeline arc-length-resamples each contributing slot to
+  `resampleCount` points and produces a per-index weighted average.
+  When only one slot has intensity > 0 the blend is skipped and that
+  slot's raw vertex count is preserved (no quality loss). If all
+  intensities are 0, slot 0 is shown as a fallback.
+- `m_Shape` and `m_Morph` fields are gone. Both renderers expose
+  `m_ShapeStack` instead. `Shape` / `MorphModifier` properties are
+  replaced by `ShapeStack`.
+- `PathMorphModifier` is **deleted**. Cross-shape transitions are
+  expressed as intensity tweens between stack slots.
+- `DOMorph` DOTween extension deleted. New `DOSlotIntensity(slotIndex,
+  value, duration)` is the replacement.
+- `DOSize` and `DOCornerRadius` now target slot 0's shape (the
+  conventional "primary" slot). Other slots are reached via
+  `g.ShapeStack.m_SlotN.shape.*` directly inside a DOTween.To setter,
+  or by changing slot 0 to point at the shape you want to drive.
+- SceneView overlay shows a 4-button slot selector ("S0 (1.00) | S1
+  (0.00) | …") instead of the old "Base / Morph Target" toggle.
+
+### Added
+- `ShapeStack` and `ShapeSlot` structs ([Runtime/Primitives](Runtime/Primitives/)).
+- `ArcLengthResample` utility ([Runtime/Core](Runtime/Core/)) extracted
+  from the deleted PathMorphModifier so other modifiers / tools can
+  reuse uniform arc-length sampling.
+- `ShapeStackDrawer` custom inspector with per-slot foldouts and a
+  prominent intensity slider on each slot's header.
+- `UI VectorImageGraphic` now applies fit-to-rect to all 4 slots so
+  blending stays in sync with the RectTransform.
+
+### Migration
+- None. The release is the first public 0.x version that ships the
+  ShapeStack model; pre-0.10 scenes are not auto-migrated and are
+  expected to be re-authored if any existed.
+
 ## [0.9.0] - 2026-06-07
 
 ### Changed

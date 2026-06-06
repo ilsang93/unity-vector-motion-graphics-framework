@@ -17,10 +17,9 @@ namespace VMG.World
         [SerializeField] private VMGShapeAsset m_SvgAsset;
         [Tooltip("SVG units per world unit when rendering an SVG asset. Keyframable.")]
         [SerializeField] private float m_SvgUnitsPerWorldUnit = 100f;
-        [SerializeField] private PrimitiveShapeSource m_Shape = PrimitiveShapeSource.Default();
+        [SerializeField] private ShapeStack m_ShapeStack = ShapeStack.Default();
         [SerializeField] private StrokeStyle m_Stroke = StrokeStyle.Default;
         [SerializeField] private FillStyle m_Fill = new FillStyle { enabled = true, color = Color.white };
-        [SerializeField] private PathMorphModifier m_Morph = PathMorphModifier.Default();
         [SerializeField] private RoundCornerModifier m_RoundCorners = RoundCornerModifier.Default();
         [SerializeField] private TrimPathModifier m_Trim = TrimPathModifier.Default();
         [Tooltip("Multiplies all fill and stroke colors. Keyframable.")]
@@ -44,10 +43,9 @@ namespace VMG.World
         private static readonly int s_MainTexID = Shader.PropertyToID("_MainTex");
 
         public VMGShapeAsset SvgAsset { get => m_SvgAsset; set { m_SvgAsset = value; Rebuild(); } }
-        public ref PrimitiveShapeSource Shape => ref m_Shape;
+        public ref ShapeStack ShapeStack => ref m_ShapeStack;
         public ref StrokeStyle Stroke => ref m_Stroke;
         public ref FillStyle Fill => ref m_Fill;
-        public ref PathMorphModifier MorphModifier => ref m_Morph;
         public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
         public ref TrimPathModifier TrimModifier => ref m_Trim;
         public Material Material { get => m_Material; set { m_Material = value; ApplyMaterial(); } }
@@ -159,11 +157,10 @@ namespace VMG.World
                 return;
             }
 
-            // Fill stage: Morph -> RoundCorner. Trim is omitted so the
-            // closed path survives for filling.
+            // Fill stage: ShapeStack -> RoundCorner. Trim is omitted so
+            // the closed path survives for filling.
             m_Pipeline.workingPath.Clear();
-            m_Shape.Build(m_Pipeline.workingPath);
-            if (m_Morph.Enabled) m_Morph.Apply(m_Pipeline.workingPath);
+            m_ShapeStack.Build(m_Pipeline.workingPath);
             if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
             if (m_Fill.enabled)
             {
@@ -171,11 +168,10 @@ namespace VMG.World
                 FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Combined);
             }
 
-            // Stroke stage: Morph -> RoundCorner -> Trim.
+            // Stroke stage: ShapeStack -> RoundCorner -> Trim.
             m_StrokeBuf.Clear();
             m_Pipeline.workingPath.Clear();
-            m_Shape.Build(m_Pipeline.workingPath);
-            if (m_Morph.Enabled) m_Morph.Apply(m_Pipeline.workingPath);
+            m_ShapeStack.Build(m_Pipeline.workingPath);
             if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
             if (m_Trim.Enabled) m_Trim.Apply(m_Pipeline.workingPath);
             if (m_Stroke.enabled)
@@ -204,7 +200,11 @@ namespace VMG.World
             var asset = m_SvgAsset;
             float scale = m_SvgUnitsPerWorldUnit > 1e-5f ? 1f / m_SvgUnitsPerWorldUnit : 1f;
             Vector2 origin = -asset.viewBoxSize * scale * 0.5f;
-            int bezSamples = Mathf.Max(4, m_Shape.bezierSamplesPerSegment > 0 ? m_Shape.bezierSamplesPerSegment : 16);
+            // Bezier sample count comes from slot 0 (SVG ignores stacks
+            // and modifiers, but it still needs a tessellation density).
+            int bezSamples = Mathf.Max(4, m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment > 0
+                                       ? m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment
+                                       : 16);
 
             for (int s = 0; s < asset.subShapes.Count; s++)
             {

@@ -10,15 +10,12 @@ namespace VMG.EditorTools
     [CanEditMultipleObjects]
     internal sealed class VectorImageGraphicEditor : GraphicEditor
     {
-        // 0 = base shape (m_Shape), 1 = morph target (m_Morph.target).
-        // Editor instance state, so switching selection resets it.
-        private int m_ActiveShape;
+        private int m_ActiveSlot;
 
         private SerializedProperty m_SvgAsset;
-        private SerializedProperty m_Shape;
+        private SerializedProperty m_ShapeStack;
         private SerializedProperty m_Stroke;
         private SerializedProperty m_Fill;
-        private SerializedProperty m_Morph;
         private SerializedProperty m_RoundCorners;
         private SerializedProperty m_Trim;
         private SerializedProperty m_FitToRect;
@@ -28,10 +25,9 @@ namespace VMG.EditorTools
         {
             base.OnEnable();
             m_SvgAsset = serializedObject.FindProperty("m_SvgAsset");
-            m_Shape = serializedObject.FindProperty("m_Shape");
+            m_ShapeStack = serializedObject.FindProperty("m_ShapeStack");
             m_Stroke = serializedObject.FindProperty("m_Stroke");
             m_Fill = serializedObject.FindProperty("m_Fill");
-            m_Morph = serializedObject.FindProperty("m_Morph");
             m_RoundCorners = serializedObject.FindProperty("m_RoundCorners");
             m_Trim = serializedObject.FindProperty("m_Trim");
             m_FitToRect = serializedObject.FindProperty("m_FitToRect");
@@ -48,16 +44,15 @@ namespace VMG.EditorTools
             bool hasSvg = m_SvgAsset.objectReferenceValue != null;
             using (new EditorGUI.DisabledScope(hasSvg))
             {
-                EditorGUILayout.PropertyField(m_Shape, true);
+                EditorGUILayout.PropertyField(m_ShapeStack, true);
                 EditorGUILayout.PropertyField(m_Fill, true);
                 EditorGUILayout.PropertyField(m_Stroke, true);
-                EditorGUILayout.PropertyField(m_Morph, true);
                 EditorGUILayout.PropertyField(m_RoundCorners, true);
                 EditorGUILayout.PropertyField(m_Trim, true);
             }
             if (hasSvg)
             {
-                EditorGUILayout.HelpBox("SVG asset assigned. Procedural shape, modifiers, and per-renderer fill/stroke are ignored — each sub-shape's own fill/stroke from the SVG is used. Graphic color tints the result.", MessageType.Info);
+                EditorGUILayout.HelpBox("SVG asset assigned. ShapeStack, modifiers, and per-renderer fill/stroke are ignored — each sub-shape's own fill/stroke from the SVG is used. Graphic color tints the result.", MessageType.Info);
             }
 
             EditorGUILayout.Space();
@@ -75,41 +70,19 @@ namespace VMG.EditorTools
         private void OnSceneGUI()
         {
             var graphic = (VectorImageGraphic)target;
-            // Per Unity guidance, do NOT use the editor's `serializedObject`
-            // inside OnSceneGUI. Build a local SerializedObject from the
-            // target so handle edits can route through SerializedProperty
-            // writes (which Unity Record mode captures as keyframes).
             var so = new SerializedObject(graphic);
 
-            // SVG asset overrides the procedural shape entirely — no
-            // FreePath handles to draw, no overlay to show. Read from
-            // the local SerializedObject to avoid Unity's "do not use
-            // the editor's serializedObject inside OnSceneGUI" warning.
             if (so.FindProperty("m_SvgAsset").objectReferenceValue != null) return;
 
-            var morph = graphic.MorphModifier;
-            bool morphAvailable = morph.enabled
-                                  && morph.target.kind == ShapeKind.FreePath;
+            var stack = graphic.ShapeStack;
+            m_ActiveSlot = FreePathSceneHandles.DrawSlotOverlay(m_ActiveSlot, ref stack);
 
-            if (graphic.Shape.kind == ShapeKind.FreePath || morphAvailable)
-            {
-                m_ActiveShape = FreePathSceneHandles.DrawActiveShapeOverlay(m_ActiveShape, morphAvailable);
-            }
+            string shapePath = "m_ShapeStack.m_Slot" + m_ActiveSlot + ".shape";
+            var slot = stack.GetSlot(m_ActiveSlot);
 
-            string shapePath;
-            PrimitiveShapeSource activeShape;
-            if (m_ActiveShape == 1 && morphAvailable)
-            {
-                shapePath = "m_Morph.target";
-                activeShape = morph.target;
-            }
-            else
-            {
-                shapePath = "m_Shape";
-                activeShape = graphic.Shape;
-            }
+            if (slot.shape.kind != ShapeKind.FreePath) return;
 
-            if (FreePathSceneHandles.Draw(graphic.rectTransform, activeShape, graphic, "Edit VMG FreePath Node",
+            if (FreePathSceneHandles.Draw(graphic.rectTransform, slot.shape, graphic, "Edit VMG FreePath Node",
                                           so, shapePath))
             {
                 EditorUtility.SetDirty(graphic);

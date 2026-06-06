@@ -1,0 +1,23 @@
+{
+    "name": "VMG.Editor",
+    "rootNamespace": "VMG.EditorTools",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.UI",
+        "VMG.Runtime.World",
+        "VMG.Runtime.Svg",
+        "UnityEngine.UI",
+        "UnityEditor.UI"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

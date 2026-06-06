@@ -1,0 +1,16 @@
+{
+    "name": "VMG.Runtime.Svg",
+    "rootNamespace": "VMG.Svg",
+    "references": [
+        "VMG.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

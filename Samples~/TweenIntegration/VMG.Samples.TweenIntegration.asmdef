@@ -1,0 +1,19 @@
+{
+    "name": "VMG.Samples.TweenIntegration",
+    "rootNamespace": "VMG.Samples",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.UI",
+        "VMG.Runtime.Tween",
+        "UnityEngine.UI",
+        "DOTween"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true,
+    "defineConstraints": [
+        "VMG_DOTWEEN"
+    ],
+    "noEngineReferences": false
+}

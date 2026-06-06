@@ -1,0 +1,19 @@
+# Unity-generated metadata for project state, not for the package
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# Build artifacts (should never live inside a UPM package, but guard anyway)
+[Bb]in/
+[Oo]bj/
+*.csproj
+*.sln
+
+# Logs
+*.log

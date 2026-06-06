@@ -1,0 +1,17 @@
+{
+    "name": "VMG.Runtime.World",
+    "rootNamespace": "VMG.World",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.Svg"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

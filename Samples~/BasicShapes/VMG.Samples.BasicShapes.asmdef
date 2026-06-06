@@ -1,0 +1,14 @@
+{
+    "name": "VMG.Samples.BasicShapes",
+    "rootNamespace": "VMG.Samples",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.UI",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true,
+    "noEngineReferences": false
+}

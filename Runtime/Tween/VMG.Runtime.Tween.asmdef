@@ -1,0 +1,27 @@
+{
+    "name": "VMG.Runtime.Tween",
+    "rootNamespace": "VMG.Tween",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.UI",
+        "VMG.Runtime.World",
+        "DOTween"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "VMG_DOTWEEN"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.demigiant.dotween",
+            "expression": "1.0.0",
+            "define": "VMG_DOTWEEN"
+        }
+    ],
+    "noEngineReferences": false
+}

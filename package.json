@@ -1,0 +1,39 @@
+{
+  "name": "com.ilsang.vmg",
+  "version": "0.9.0",
+  "displayName": "Ilsang VMG - Vector Motion Graphics Framework",
+  "description": "Procedural vector motion graphics runtime for Unity. AE-style shape layers (path/stroke/fill/trim/round corner) with full Animator/Timeline integration for both UGUI and world-space rendering.",
+  "unity": "6000.3",
+  "keywords": [
+    "vector",
+    "motion graphics",
+    "after effects",
+    "shape",
+    "ugui",
+    "procedural mesh"
+  ],
+  "author": {
+    "name": "ilsang93"
+  },
+  "dependencies": {
+    "com.unity.modules.ui": "1.0.0",
+    "com.unity.ugui": "2.0.0"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Shapes",
+      "description": "Animated trim circle, rounded rectangle and progress ring demos.",
+      "path": "Samples~/BasicShapes"
+    },
+    {
+      "displayName": "DOTween Integration",
+      "description": "Demonstrates DOFade / DOColor / DOSize / DOTrim / DOCornerRadius extensions. Requires DOTween + VMG_DOTWEEN define.",
+      "path": "Samples~/TweenIntegration"
+    },
+    {
+      "displayName": "SVG Import",
+      "description": "Sample .svg icons (heart, star) demonstrating the SVG ScriptedImporter and renderer integration.",
+      "path": "Samples~/SvgImport"
+    }
+  ]
+}

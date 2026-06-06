@@ -187,7 +187,7 @@
   pose blending, `AnimationEvent` / Timeline `Signal` for Object-ref
   swaps).
 
-### Deferred to BACKLOG
+### Deferred
 - Object-reference keyframing (`Material` / `Texture` / `SvgAsset`)
   via custom Timeline tracks.
 
@@ -289,8 +289,8 @@
 
 ### Notes
 - Modifier execution order is still fixed (Morph → RoundCorner → Trim) on
-  both renderers. AE-style user-reorderable stack is captured in
-  [BACKLOG.md](BACKLOG.md) as a Phase 3 item.
+  both renderers. AE-style user-reorderable stack is deferred to a later
+  phase.
 
 ## [0.1.0] - 2026-06-06
 

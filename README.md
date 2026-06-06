@@ -152,7 +152,3 @@ The only Unity AnimationClip limitation that bites:
 |---|---|---|
 | `Material`, `Texture`, `SvgAsset` (any Object reference) | AnimationClip's Object track is PPtr-only and not exposed for these slots | Swap via script (`AnimationEvent` callback, or Timeline `Signal`) |
 | FreePath node reorder | The slot index is the keyframe channel; renaming/reordering would break bindings | Use end-only add/remove (the +/- buttons in the inspector) |
-
-## Roadmap
-
-Deferred work is tracked in [BACKLOG.md](BACKLOG.md).

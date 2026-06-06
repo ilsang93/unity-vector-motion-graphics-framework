@@ -17,3 +17,13 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Internal / dev-only notes — not shipped with the package
+BACKLOG.md
+BACKLOG.md.meta
+TODO.md
+TODO.md.meta
+NOTES.md
+NOTES.md.meta
+SCRATCH.md
+SCRATCH.md.meta

@@ -1,10 +1,12 @@
 # VMG — Vector Motion Graphics Framework
 
+[English](README.md) · [한국어](README.ko.md)
+
 Procedural vector motion graphics runtime for Unity. Built for AE-style shape-layer
 expressiveness with first-class Unity Animator / Timeline integration on both UGUI
 and world-space renderers.
 
-## Features (0.10.0)
+## Features (0.11.0)
 
 - Path + Node data model with cubic Bezier (`inTangent` / `outTangent` per node), tessellated upstream of every modifier
 - Procedural CPU mesh generation
@@ -16,6 +18,12 @@ and world-space renderers.
   - Cap: Butt / Square / Round
   - Join: Miter (with limit) / Bevel / Round
 - Fill with self-contained ear-clipping triangulator (concave-safe)
+- **Depth (3D extrusion)** — `VectorSpriteRenderer` only. Extrudes the
+  fill along Z with Front / Center / Back pivot alignment. Vertex
+  normals are emitted so a lit material shades the sides. Requires a
+  3D URP renderer (Forward / Forward+ / Deferred) and an **Opaque**
+  surface material — the 2D Renderer and Transparent surfaces will
+  not light or occlude correctly.
 - Modifiers (fixed order: RoundCorner → Trim)
   - Round Corner — real path-level geometry rounding with adjacent-corner clamping
   - Trim Path — start / end / offset with closed-path wrap support and
@@ -110,6 +118,8 @@ window's "Add Property" tree walks into it. The full surface:
 - **UGUI renderer** — `FitToRect`, `Graphic.color`
 - **World renderer** — `Tint`, `SvgUnitsPerWorldUnit`, `SortingLayerID`,
   `SortingOrder`
+- **Depth (world renderer only)** — `m_Depth.enabled`,
+  `m_Depth.thickness`, `m_Depth.alignment`
 
 ### Multi-shape blending
 

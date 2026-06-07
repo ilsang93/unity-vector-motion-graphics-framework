@@ -20,6 +20,7 @@ namespace VMG.World
         [SerializeField] private ShapeStack m_ShapeStack = ShapeStack.Default();
         [SerializeField] private StrokeStyle m_Stroke = StrokeStyle.Default;
         [SerializeField] private FillStyle m_Fill = new FillStyle { enabled = true, color = Color.white };
+        [SerializeField] private DepthStyle m_Depth = DepthStyle.Default;
         [SerializeField] private RoundCornerModifier m_RoundCorners = RoundCornerModifier.Default();
         [SerializeField] private TrimPathModifier m_Trim = TrimPathModifier.Default();
         [Tooltip("Multiplies all fill and stroke colors. Keyframable.")]
@@ -36,6 +37,7 @@ namespace VMG.World
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_Combined = new MeshBuffer();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
+        private readonly MeshBuffer m_BackStrokeBuf = new MeshBuffer();
         private Mesh m_Mesh;
         private MeshFilter m_Filter;
         private MeshRenderer m_Renderer;
@@ -46,6 +48,7 @@ namespace VMG.World
         public ref ShapeStack ShapeStack => ref m_ShapeStack;
         public ref StrokeStyle Stroke => ref m_Stroke;
         public ref FillStyle Fill => ref m_Fill;
+        public ref DepthStyle Depth => ref m_Depth;
         public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
         public ref TrimPathModifier TrimModifier => ref m_Trim;
         public Material Material { get => m_Material; set { m_Material = value; ApplyMaterial(); } }
@@ -144,6 +147,12 @@ namespace VMG.World
             m_Renderer.sortingOrder = m_SortingOrder;
         }
 
+        // Stroke sits ε above the front fill face to avoid z-fighting when
+        // depth extrusion is enabled. 0.0001 world-unit is small enough to
+        // be visually invisible at any reasonable camera distance but
+        // large enough to win the depth test on every consumer GPU.
+        private const float StrokeZBias = 1e-4f;
+
         public void Rebuild()
         {
             EnsureRefs();
@@ -157,6 +166,9 @@ namespace VMG.World
                 return;
             }
 
+            bool extrude = m_Depth.enabled && m_Depth.thickness > 0f;
+            m_Depth.GetFaceZ(out float frontZ, out float backZ);
+
             // Fill stage: ShapeStack -> RoundCorner. Trim is omitted so
             // the closed path survives for filling.
             m_Pipeline.workingPath.Clear();
@@ -165,7 +177,10 @@ namespace VMG.World
             if (m_Fill.enabled)
             {
                 var fill = m_Fill; fill.color *= m_Tint;
-                FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Combined);
+                if (extrude)
+                    FillMeshBuilder.BuildExtruded(m_Pipeline.workingPath, fill, m_Depth, m_Combined);
+                else
+                    FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Combined);
             }
 
             // Stroke stage: ShapeStack -> RoundCorner -> Trim.
@@ -177,9 +192,32 @@ namespace VMG.World
             if (m_Stroke.enabled)
             {
                 var stroke = m_Stroke; stroke.color *= m_Tint;
+                // In depth mode, force Inner alignment so the ribbon stays
+                // inside the fill silhouette. Center/Outer would leak past
+                // the side walls and break occlusion when the renderer is
+                // viewed from the side.
+                if (extrude) stroke.alignment = StrokeAlignment.Inner;
                 StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
-            AppendBuffer(m_StrokeBuf, m_Combined);
+            if (extrude)
+            {
+                // Duplicate the stroke ribbon onto both fill faces so the
+                // outline is visible from every viewing angle in 3D.
+                // Back copy is made before the front-side promote so the
+                // source vertex Z is still 0.
+                m_BackStrokeBuf.CopyFrom(m_StrokeBuf);
+
+                m_StrokeBuf.PromoteToZWithFrontNormal(frontZ + StrokeZBias);
+                AppendBuffer(m_StrokeBuf, m_Combined);
+
+                m_BackStrokeBuf.PromoteToZWithFrontNormal(backZ - StrokeZBias);
+                m_BackStrokeBuf.FlipForBackFace();
+                AppendBuffer(m_BackStrokeBuf, m_Combined);
+            }
+            else
+            {
+                AppendBuffer(m_StrokeBuf, m_Combined);
+            }
 
             m_Combined.NormalizeUVsToVertexBounds();
             m_Combined.ApplyTo(m_Mesh);
@@ -234,12 +272,28 @@ namespace VMG.World
 
         private static void AppendBuffer(MeshBuffer src, MeshBuffer dst)
         {
+            // Empty src is a no-op — preserve dst's existing normals (the
+            // common case when stroke is disabled but fill is extruded).
+            if (src.vertices.Count == 0) return;
+
             int baseV = dst.vertices.Count;
             for (int i = 0; i < src.vertices.Count; i++)
             {
                 dst.vertices.Add(src.vertices[i]);
                 dst.colors.Add(src.colors[i]);
                 dst.uvs.Add(src.uvs[i]);
+            }
+            // Carry normals only if both sides actually have a normal for
+            // every vertex; otherwise drop them so ApplyTo skips SetNormals.
+            bool srcHasNormals = src.normals.Count == src.vertices.Count;
+            bool dstHasNormals = dst.normals.Count == baseV;
+            if (srcHasNormals && (dstHasNormals || baseV == 0))
+            {
+                for (int i = 0; i < src.normals.Count; i++) dst.normals.Add(src.normals[i]);
+            }
+            else
+            {
+                dst.normals.Clear();
             }
             for (int i = 0; i < src.triangles.Count; i++) dst.triangles.Add(baseV + src.triangles[i]);
         }

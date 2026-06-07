@@ -18,6 +18,7 @@ namespace VMG.EditorTools
         private SerializedProperty m_ShapeStack;
         private SerializedProperty m_Stroke;
         private SerializedProperty m_Fill;
+        private SerializedProperty m_Depth;
         private SerializedProperty m_RoundCorners;
         private SerializedProperty m_Trim;
         private SerializedProperty m_Tint;
@@ -33,6 +34,7 @@ namespace VMG.EditorTools
             m_ShapeStack = serializedObject.FindProperty("m_ShapeStack");
             m_Stroke = serializedObject.FindProperty("m_Stroke");
             m_Fill = serializedObject.FindProperty("m_Fill");
+            m_Depth = serializedObject.FindProperty("m_Depth");
             m_RoundCorners = serializedObject.FindProperty("m_RoundCorners");
             m_Trim = serializedObject.FindProperty("m_Trim");
             m_Tint = serializedObject.FindProperty("m_Tint");
@@ -55,6 +57,17 @@ namespace VMG.EditorTools
                 EditorGUILayout.PropertyField(m_ShapeStack, true);
                 EditorGUILayout.PropertyField(m_Fill, true);
                 EditorGUILayout.PropertyField(m_Stroke, true);
+                EditorGUILayout.PropertyField(m_Depth, true);
+                // When depth is on, the renderer forces stroke alignment
+                // to Inner so the ribbon stays inside the extruded fill
+                // silhouette. Surface this to the user so the apparent
+                // override doesn't look like a bug.
+                if (DepthEnabled() && !StrokeAlignmentIsInner())
+                {
+                    EditorGUILayout.HelpBox(
+                        "Depth is enabled — stroke alignment is rendered as Inner regardless of the field above so the outline stays inside the 3D silhouette.",
+                        MessageType.Info);
+                }
                 EditorGUILayout.PropertyField(m_RoundCorners, true);
                 EditorGUILayout.PropertyField(m_Trim, true);
             }
@@ -76,6 +89,20 @@ namespace VMG.EditorTools
             EditorGUILayout.PropertyField(m_SortingOrder, new GUIContent("Order in Layer"));
 
             serializedObject.ApplyModifiedProperties();
+        }
+
+        private bool DepthEnabled()
+        {
+            var enabledProp = m_Depth.FindPropertyRelative("enabled");
+            var thicknessProp = m_Depth.FindPropertyRelative("thickness");
+            return enabledProp != null && enabledProp.boolValue
+                   && thicknessProp != null && thicknessProp.floatValue > 0f;
+        }
+
+        private bool StrokeAlignmentIsInner()
+        {
+            var alignProp = m_Stroke.FindPropertyRelative("alignment");
+            return alignProp != null && alignProp.enumValueIndex == (int)StrokeAlignment.Inner;
         }
 
         private static void SortingLayerField(SerializedProperty layerID)

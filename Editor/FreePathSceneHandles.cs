@@ -20,7 +20,11 @@ namespace VMG.EditorTools
     {
         private const float NodeHandleSize = 0.12f;
         private const float TangentHandleSize = 0.09f;
-        private static readonly Color NodeColor = new Color(1f, 1f, 1f, 1f);
+        // Yellow node with a dark outline so the handle stays visible against
+        // any fill/stroke color (white fill was the original problem case).
+        private static readonly Color NodeColor = new Color(1f, 0.85f, 0.1f, 1f);
+        private static readonly Color NodeOutlineColor = new Color(0f, 0f, 0f, 0.85f);
+        private const float NodeOutlineScale = 1.5f;
         private static readonly Color OutTangentColor = new Color(0.35f, 0.85f, 1f, 1f);
         private static readonly Color InTangentColor = new Color(1f, 0.55f, 0.35f, 1f);
 
@@ -54,6 +58,13 @@ namespace VMG.EditorTools
 
                 Vector3 worldPos = space.TransformPoint(nodePos);
                 float size = HandleUtility.GetHandleSize(worldPos);
+
+                // Dark outline behind the node so the handle stays readable
+                // against white fill/stroke. Drawn as a non-interactive cap
+                // slightly larger than the actual move handle.
+                Handles.color = NodeOutlineColor;
+                Handles.RectangleHandleCap(0, worldPos, Quaternion.identity,
+                    size * NodeHandleSize * NodeOutlineScale, EventType.Repaint);
 
                 // Node position handle.
                 Handles.color = NodeColor;

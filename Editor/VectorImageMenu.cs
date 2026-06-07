@@ -36,6 +36,20 @@ namespace VMG.EditorTools
             GameObject parent = command.context as GameObject;
             GameObject go = new GameObject("Vector Sprite", typeof(MeshFilter), typeof(MeshRenderer), typeof(VectorSpriteRenderer));
             GameObjectUtility.SetParentAndAlign(go, parent);
+
+            // World-space default: 1m × 1m. PrimitiveShapeSource's lazy
+            // Normalize() picks 100 for pixel-friendly UGUI use, which
+            // would fill a default camera's view here. Stroke width also
+            // scales down to match (default 4 would be 4m otherwise).
+            var renderer = go.GetComponent<VectorSpriteRenderer>();
+            ref var stack = ref renderer.ShapeStack;
+            var size = new Vector2(1f, 1f);
+            stack.m_Slot0.shape.size = size;
+            stack.m_Slot1.shape.size = size;
+            stack.m_Slot2.shape.size = size;
+            stack.m_Slot3.shape.size = size;
+            renderer.Stroke.width = 0.04f;
+
             Undo.RegisterCreatedObjectUndo(go, "Create Vector Sprite Renderer");
             Selection.activeGameObject = go;
             EditorSceneManager.MarkSceneDirty(go.scene);

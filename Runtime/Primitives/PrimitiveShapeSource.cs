@@ -55,7 +55,7 @@ namespace VMG.Core
         [Tooltip("Whether the FreePath wraps from last back to first node. Keyframable (bool).")]
         public bool freeClosed;
         [Range(2, 64)]
-        [Tooltip("Bezier tessellation density per cubic segment. Keyframable.")]
+        [Tooltip("Bezier tessellation budget per cubic segment. Adaptive subdivision uses fewer samples on near-straight curves and more on tight curves, up to this cap. Keyframable.")]
         public int bezierSamplesPerSegment;
         [Range(0, MaxFreeNodes)]
         [Tooltip("How many of the 64 FreePath node slots are active. Keyframable so the active count can animate over time.")]

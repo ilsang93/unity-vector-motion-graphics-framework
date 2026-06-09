@@ -1,5 +1,106 @@
 # Changelog
 
+## [0.12.0] - 2026-06-09
+
+### Changed
+
+- **Fill triangulation rewrite.** `FillTessellator` now picks a strategy
+  per path: simple polylines go through the existing ear-clipper (one
+  vertex per node, no change vs. 0.11.x); self-intersecting polylines
+  go through a new trapezoidal scanline decomposition. The scanline path
+  cuts the plane at every vertex Y and every edge-edge crossing Y, then
+  fills the even-odd regions in each horizontal strip as trapezoids.
+  Independent of CW/CCW, frame-stable on morph intermediates, and matches
+  the user-facing definition "the region geometrically enclosed by the
+  stroke." A star traced as one continuous polyline correctly hollows
+  out the inner pentagon; a star traced as its outer silhouette fills
+  through.
+- **Bezier tessellation is now adaptive.** `BezierTessellator` replaced
+  uniform t-stepping with recursive de Casteljau subdivision plus a
+  flatness test (0.5% of chord length). `bezierSamplesPerSegment` is
+  reinterpreted as a depth cap (`ceil(log2(samples))`) so the worst case
+  matches the old budget while near-straight curves use far fewer points
+  and high-curvature segments get the budget they need.
+- **Miter join correctness.** The miter-length check now divides by the
+  full stroke width instead of the outer half-width, so Inner alignment
+  no longer lets one bend direction produce unbounded spikes (the outer
+  half-width collapsed to 0 there). Near-collinear joins (|sin θ| < 1e-3)
+  skip the spike calculation entirely. `miterLimit` is now interpreted
+  in the SVG convention (multiple of full stroke width).
+- **ShapeStack slot alignment is configurable.** New
+  `ShapeStack.alignment` enum (`Auto` / `Preserve`, keyframable). `Auto`
+  (default) reorders each closed slot path so blends between *different*
+  shapes don't shrink at the midpoint. `Preserve` keeps node order so
+  blends between *the same shape at different rotations* visibly rotate.
+- **`GameObject > UI (Canvas) > Vector Image` menu placement.** Unity 6's
+  UGUI renamed the category from `"UI"` to `"UI (Canvas)"`. The package
+  now matches so Vector Image appears alongside Image / Raw Image /
+  Panel instead of in a separate `"UI"` category.
+
+### Added
+
+- **ShapeStack inspector polish.**
+  - Slots with `intensity == 0` get a dimmed header label and a `·`
+    indicator so live vs. inactive slots are scannable at a glance.
+  - Header `⋯` menu: "Reset intensities" (slot 0 = 1, others = 0) and
+    "Swap Slot a ↔ Slot b" for all 6 pairs. Swap moves the whole slot
+    (intensity + shape) via `SerializedProperty.boxedValue`.
+- **FreePath new-node placement follows tangent.** Appending a node now
+  continues in the previous node's outTangent direction, or the previous
+  segment's direction if no tangent, with distance matching the previous
+  segment. Old behaviour (`prev + (20, 0)`) is the final fallback.
+- **SceneView inactive-slot guides.** Slots other than the active one
+  draw their path as a faint polyline so multi-slot blends are easier
+  to line up while editing.
+
+### Fixed
+
+- Ear-clipper output is now deterministic on the same polygon shape
+  regardless of which node the caller listed first (rotates the index
+  list to start at the leftmost-lowest vertex before the ear loop).
+  Stabilizes fill triangle sets across morph frames.
+
+## [0.11.0] - 2026-06-08
+
+### Added
+
+- **Depth (3D fill extrusion) on `VectorSpriteRenderer`.** New
+  `DepthStyle` (enabled / thickness / alignment) extrudes the fill
+  polygon along the Z axis. Pivot at Z=0, +Z is camera-facing;
+  alignment is Front / Center / Back (memory:
+  `project_depth_feature.md`). Fill is extruded; stroke is duplicated
+  onto both faces with epsilon Z bias to read from any angle. When
+  depth is on, stroke alignment is forced to Inner so the ribbon stays
+  inside the silhouette.
+- **Vertex normals on extruded fill.** +Z front, −Z back, per-edge
+  outward on side walls — a Lit material in a Forward / Forward+ /
+  Deferred 3D renderer shades the sides correctly.
+- **`MeshBuffer` helpers**: normal-aware `AddVertex`,
+  `PromoteToZWithFrontNormal`, `CopyFrom`, `FlipForBackFace`. 2D-only
+  paths stay unchanged (`ApplyTo` only pushes normals when the buffer
+  carries one per vertex).
+- **Korean README** (`README.ko.md`) linked from the English README.
+
+### Changed
+
+- `GameObject > VMG > Vector Sprite Renderer` factory now defaults to
+  size 1m × 1m and stroke width 0.04 so a freshly created world
+  renderer doesn't overwhelm the default scene camera (previous
+  defaults were UGUI-friendly 100 units / 4 width).
+
+### Fixed
+
+- **FreePath SceneView handle visibility against white fills/strokes.**
+  Yellow node handle with a dark rectangle outline cap drawn behind it
+  so the handle stays readable on any color.
+
+### Known limitation
+
+- URP 2D Renderer does NOT light Lit shaders by 3D Directional Light —
+  it handles only `Light2D`. Visible depth shading requires a Forward /
+  Forward+ / Deferred 3D renderer. The mesh normals are correct in
+  either case; this is purely about the renderer pipeline.
+
 ## [0.10.0] - 2026-06-07
 
 ### Changed (breaking)

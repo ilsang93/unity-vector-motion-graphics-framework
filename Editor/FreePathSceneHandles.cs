@@ -122,6 +122,44 @@ namespace VMG.EditorTools
             return Draw(space, shape, owner, undoLabel, null, null);
         }
 
+        // Faint outline color for non-active stack slots. Low alpha so it
+        // reads as a guide line, not a primary edit handle.
+        private static readonly Color InactiveSlotColor = new Color(1f, 1f, 1f, 0.18f);
+        private const float InactiveSlotLineWidth = 1.5f;
+
+        // Scratch path reused across DrawInactiveSlotGuides calls. Build()
+        // clears it so contents from a prior call don't leak.
+        private static readonly VectorPath s_guidePath = new VectorPath();
+
+        /// Draws every stack slot except `activeSlot` as a faint polyline
+        /// in the SceneView so multi-slot blends are easier to read while
+        /// editing one slot. Operates on every ShapeKind (not just
+        /// FreePath) so guides show up regardless of slot contents.
+        public static void DrawInactiveSlotGuides(Transform space, ref ShapeStack stack, int activeSlot)
+        {
+            if (space == null) return;
+            Color prev = Handles.color;
+            Handles.color = InactiveSlotColor;
+            for (int i = 0; i < ShapeStack.MaxSlots; i++)
+            {
+                if (i == activeSlot) continue;
+                var slot = stack.GetSlot(i);
+                s_guidePath.Clear();
+                slot.shape.Build(s_guidePath);
+                int n = s_guidePath.Count;
+                if (n < 2) continue;
+                int lineCount = s_guidePath.closed ? n + 1 : n;
+                Vector3[] points = new Vector3[lineCount];
+                for (int v = 0; v < n; v++)
+                {
+                    points[v] = space.TransformPoint(s_guidePath.GetPoint(v));
+                }
+                if (s_guidePath.closed) points[n] = points[0];
+                Handles.DrawAAPolyLine(InactiveSlotLineWidth, points);
+            }
+            Handles.color = prev;
+        }
+
         // Slot field naming convention: m_Node00 .. m_Node63. Matches the
         // hand-flattened field layout in PrimitiveShapeSource.
         private static string SlotName(int i)

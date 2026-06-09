@@ -41,7 +41,7 @@ namespace VMG.Core
         [Tooltip("Join style between segments. Keyframable (enum).")]
         public LineJoin join;
         [Min(1f)]
-        [Tooltip("Miter length cap (as multiple of half-width) before falling back to bevel. Keyframable.")]
+        [Tooltip("Miter length cap as multiple of full stroke width (matches SVG stroke-miterlimit). Corners sharper than this fall back to bevel. Keyframable.")]
         public float miterLimit;
 
         public static StrokeStyle Default => new StrokeStyle

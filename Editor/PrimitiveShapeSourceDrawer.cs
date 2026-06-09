@@ -191,9 +191,19 @@ namespace VMG.EditorTools
             return h;
         }
 
-        // Place the new slot near the previous last slot so the path
-        // doesn't appear to "spawn" at (0, 0). Offset is intentionally
-        // small so the user can see where the new node landed and tweak.
+        // Default offset for the first node, and the fallback length when
+        // we have no direction information (single existing node with no
+        // tangent). Tuned to match the package's default authoring scale
+        // (PrimitiveShapeSource.Normalize lazies size to 100,100) — small
+        // enough to land near the previous node, large enough to be
+        // visible and pickable.
+        private const float DefaultNodeSpacing = 20f;
+
+        // Place the new slot so the path continues naturally from the
+        // last node: pick the direction of the previous node's outTangent
+        // if present, else the previous segment's direction, else fall
+        // back to (+x, 0). Distance matches the previous segment so the
+        // visual spacing stays consistent.
         private static void AddNodeAtEnd(SerializedProperty shapeProp, int currentActive)
         {
             int newIndex = currentActive;
@@ -205,7 +215,34 @@ namespace VMG.EditorTools
                 var prevSlot = shapeProp.FindPropertyRelative(SlotName(currentActive - 1));
                 if (prevSlot != null)
                 {
-                    seedPos = prevSlot.FindPropertyRelative("position").vector2Value + new Vector2(20f, 0f);
+                    Vector2 prevPos = prevSlot.FindPropertyRelative("position").vector2Value;
+                    Vector2 prevOut = prevSlot.FindPropertyRelative("outTangent").vector2Value;
+
+                    Vector2 dir = Vector2.zero;
+                    float dist = DefaultNodeSpacing;
+
+                    if (prevOut.sqrMagnitude > 1e-6f)
+                    {
+                        dir = prevOut.normalized;
+                    }
+                    else if (currentActive >= 2)
+                    {
+                        var prev2Slot = shapeProp.FindPropertyRelative(SlotName(currentActive - 2));
+                        if (prev2Slot != null)
+                        {
+                            Vector2 prev2Pos = prev2Slot.FindPropertyRelative("position").vector2Value;
+                            Vector2 seg = prevPos - prev2Pos;
+                            float segLen = seg.magnitude;
+                            if (segLen > 1e-4f)
+                            {
+                                dir = seg / segLen;
+                                dist = segLen;
+                            }
+                        }
+                    }
+
+                    if (dir.sqrMagnitude < 1e-8f) dir = new Vector2(1f, 0f);
+                    seedPos = prevPos + dir * dist;
                 }
             }
 

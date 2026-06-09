@@ -19,9 +19,15 @@ namespace VMG.Core
 
             Color32 col = style.color;
             int firstVert = mb.VertexCount;
-            for (int i = 0; i < s_poly.Count; i++) mb.AddVertex(s_poly[i], col);
 
-            EarClippingTriangulator.Triangulate(s_poly, mb.triangles, firstVert);
+            // FillTessellator picks the right strategy for the path:
+            // ear-clipping on simple polylines (1 vertex per node), or
+            // trapezoidal scanline on self-intersecting ones (4 vertices
+            // per fill trapezoid). Either way the emitted vertices are
+            // ours to push into the mesh buffer.
+            FillTessellator.Triangulate(s_poly, mb.triangles, firstVert);
+            var emitted = FillTessellator.GetEmittedVertices();
+            for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col);
         }
 
         /// 3D extrusion of the fill polygon. Emits front face (normal +Z),
@@ -44,17 +50,23 @@ namespace VMG.Core
             for (int i = 0; i < path.Count; i++) s_poly.Add(path.nodes[i].position);
             int n = s_poly.Count;
 
-            // Triangulate once in CCW source order. Ear clipping always
-            // emits CCW triangles. Unity treats CW as front-facing.
+            // Triangulate the front face using FillTessellator so
+            // self-intersecting paths (e.g. a star drawn as a single
+            // continuous polyline) honor even-odd winding. The emitted
+            // vertex set drives front + back face vertex emission — for
+            // simple polygons it's the source verts 1:1; for self-
+            // intersecting ones it's trapezoid corners.
             s_capTris.Clear();
-            EarClippingTriangulator.Triangulate(s_poly, s_capTris, 0);
+            FillTessellator.Triangulate(s_poly, s_capTris, 0);
+            var aug = FillTessellator.GetEmittedVertices();
+            int augN = aug.Count;
 
             // Front face at frontZ. Reverse the per-triangle winding so
             // CCW source -> CW from the +Z viewing direction (= front).
             int frontBase = mb.VertexCount;
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < augN; i++)
             {
-                var p = s_poly[i];
+                var p = aug[i];
                 mb.AddVertex(new Vector3(p.x, p.y, frontZ), col, p, new Vector3(0f, 0f, 1f));
             }
             for (int i = 0; i + 2 < s_capTris.Count; i += 3)
@@ -68,17 +80,20 @@ namespace VMG.Core
             // from -Z (the back face's outward direction) the polygon
             // appears mirror-flipped, so source-CCW reads as CW = front.
             int backBase = mb.VertexCount;
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < augN; i++)
             {
-                var p = s_poly[i];
+                var p = aug[i];
                 mb.AddVertex(new Vector3(p.x, p.y, backZ), col, p, new Vector3(0f, 0f, -1f));
             }
             for (int i = 0; i < s_capTris.Count; i++) mb.triangles.Add(backBase + s_capTris[i]);
 
-            // Side walls: one quad per closed-path edge. Each quad gets
-            // its own 4 vertices because the outward normal differs per
-            // edge — sharing with neighbors would average normals and
-            // ruin flat-shaded side lighting.
+            // Side walls: one quad per *original* closed-path edge. Walls
+            // follow the authored polyline, not the augmented one — a
+            // self-crossing at an intersection point is a topological
+            // construct that shouldn't sprout side geometry. Users who
+            // want side walls along every visible boundary edge of a
+            // self-intersecting fill will need to author the path without
+            // crossings.
             for (int i = 0; i < n; i++)
             {
                 Vector2 a = s_poly[i];

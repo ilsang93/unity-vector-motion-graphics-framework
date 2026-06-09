@@ -77,6 +77,10 @@ namespace VMG.EditorTools
             var stack = graphic.ShapeStack;
             m_ActiveSlot = FreePathSceneHandles.DrawSlotOverlay(m_ActiveSlot, ref stack);
 
+            // Faint guides for the other 3 slots — helps the user line up
+            // a multi-slot blend without switching the overlay back and forth.
+            FreePathSceneHandles.DrawInactiveSlotGuides(graphic.rectTransform, ref stack, m_ActiveSlot);
+
             string shapePath = "m_ShapeStack.m_Slot" + m_ActiveSlot + ".shape";
             var slot = stack.GetSlot(m_ActiveSlot);
 

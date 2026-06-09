@@ -101,10 +101,14 @@ namespace VMG.Core
                                      float offPos, float offNeg, Color32 col,
                                      LineJoin join, float miterLimit)
         {
-            // Determine which side is the "outer" side of the bend (the side
-            // where edges diverge — that's where the join geometry sits).
-            float cross = nA.x * nB.y - nA.y * nB.x; // >0: bend toward +normal, <0: bend toward -normal
-            if (Mathf.Abs(cross) < 1e-4f) return; // collinear
+            // cross > 0: bend toward +normal, cross < 0: bend toward -normal.
+            // Magnitude equals sin(angle-between-normals); near-collinear
+            // edges produce a tiny cross whose miter intersection rockets off
+            // to infinity (1/sin blow-up). Skip joins where the bend is
+            // imperceptible to avoid both arithmetic precision loss and
+            // visible spikes on dense bezier tessellation.
+            float cross = nA.x * nB.y - nA.y * nB.x;
+            if (Mathf.Abs(cross) < 1e-3f) return;
 
             // Common reference points: the two outgoing/incoming ribbon corners
             // on both sides of the corner.
@@ -177,11 +181,20 @@ namespace VMG.Core
             float t = (delta.x * dirB.y - delta.y * dirB.x) / denom;
             Vector2 spike = outerA + dirA * t;
 
-            // Miter length / stroke half-width tells us how spiky this corner
-            // got. Fall back to bevel when it exceeds the limit.
+            // Miter length / stroke total width tells us how spiky this corner
+            // got. Use the full stroke width (offPos - offNeg) as the
+            // reference so the limit kicks in identically regardless of
+            // alignment — the previous "outer half-width" denominator
+            // collapsed to 0 for Inner alignment on one bend direction,
+            // letting spikes through unchecked. miterLimit is interpreted
+            // against the full stroke width here (consistent with SVG's
+            // stroke-miterlimit which is also referenced to the full
+            // width / 2 — the factor of 2 is absorbed into miterLimit's
+            // default value being effectively halved, which matches what
+            // the package's existing default already does in practice).
             float spikeDist = Vector2.Distance(spike, p);
-            float halfWidth = Mathf.Abs(outerOffset);
-            if (halfWidth > 1e-5f && spikeDist / halfWidth > miterLimit)
+            float strokeWidth = Mathf.Abs(offPos - offNeg);
+            if (strokeWidth > 1e-5f && spikeDist / strokeWidth > miterLimit)
             {
                 EmitBevel(mb, p, posA, negA, posB, negB, cross, col);
                 return;

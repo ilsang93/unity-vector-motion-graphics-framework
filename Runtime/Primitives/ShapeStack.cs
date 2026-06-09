@@ -16,6 +16,26 @@ namespace VMG.Core
         public float intensity;
     }
 
+    /// How sibling slots are aligned before the index-by-index blend.
+    /// Two slots whose paths start at different positions (Circle at +x,
+    /// Rectangle at bottom-left, Polygon at +y) will blend into a
+    /// rotated, shrunken intermediate unless their first vertices are
+    /// matched up first.
+    public enum BlendAlignment
+    {
+        /// Reorder each closed slot path so it winds CCW and starts at
+        /// the node closest to the +x axis. Best for blends between
+        /// *different* shapes (Circle ↔ Rectangle ↔ Triangle): keeps
+        /// the intermediate shape from shrinking. Discards any rotation
+        /// the user encoded by authoring slot N at a different angle.
+        Auto = 0,
+        /// Use each slot's node order as authored. Best for blends
+        /// between *the same shape at different rotations*: the morph
+        /// visibly rotates as intensity shifts. The user is responsible
+        /// for matching the slots' starting vertices.
+        Preserve = 1,
+    }
+
     /// Up to 4 PrimitiveShapeSources blended by arc-length resampling
     /// and per-slot intensity weights. Replaces the old "single shape +
     /// PathMorphModifier" pair — both base shape and morph targets are
@@ -37,6 +57,9 @@ namespace VMG.Core
         [Tooltip("Vertex count every active slot is resampled to before the weighted blend. Keyframable but changing it mid-animation forces a topology change.")]
         public int resampleCount;
 
+        [Tooltip("How slots are aligned before the blend. Auto reorders each path so morphs between different shapes don't shrink at the midpoint; Preserve keeps node order so same-shape-different-rotation morphs visibly rotate. Keyframable (enum int).")]
+        public BlendAlignment alignment;
+
         public ShapeSlot m_Slot0;
         public ShapeSlot m_Slot1;
         public ShapeSlot m_Slot2;
@@ -50,6 +73,7 @@ namespace VMG.Core
             return new ShapeStack
             {
                 resampleCount = 64,
+                alignment = BlendAlignment.Auto,
                 m_Slot0 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 1f },
                 m_Slot1 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
                 m_Slot2 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
@@ -105,6 +129,69 @@ namespace VMG.Core
             new List<Vector2>(128), new List<Vector2>(128),
             new List<Vector2>(128), new List<Vector2>(128),
         };
+        // Scratch for AlignClosedPath rotation step.
+        private static readonly List<VectorNode> s_alignTmp = new List<VectorNode>(128);
+
+        /// Reorders a closed path's nodes so (1) it winds CCW and
+        /// (2) index 0 is the node whose direction from the centroid is
+        /// closest to +x. This keeps morphs between primitives whose
+        /// "first vertex" conventions differ (Circle at +x, Rectangle at
+        /// the bottom-left corner, Polygon at +y) from producing a
+        /// rotated and shrunken intermediate.
+        private static void AlignClosedPath(VectorPath path)
+        {
+            int n = path.Count;
+            if (n < 3) return;
+
+            // 1. Flip to CCW if signed area is negative. We compute the
+            //    shoelace sum and reverse the node order in place.
+            float area2 = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 a = path.GetPoint(i);
+                Vector2 b = path.GetPoint((i + 1) % n);
+                area2 += a.x * b.y - b.x * a.y;
+            }
+            if (area2 < 0f)
+            {
+                int lo = 0, hi = n - 1;
+                while (lo < hi)
+                {
+                    var tmp = path.nodes[lo];
+                    path.nodes[lo] = path.nodes[hi];
+                    path.nodes[hi] = tmp;
+                    lo++; hi--;
+                }
+            }
+
+            // 2. Centroid of the node positions. Cheap and good enough
+            //    for the "which node points toward +x" decision — we don't
+            //    need the geometric centroid of the filled polygon.
+            Vector2 c = Vector2.zero;
+            for (int i = 0; i < n; i++) c += path.GetPoint(i);
+            c /= n;
+
+            // 3. Find the node whose angle from the centroid is closest
+            //    to 0 (the +x axis). atan2 sorts by angle; we want the
+            //    smallest |atan2| value.
+            int best = 0;
+            float bestAbs = float.PositiveInfinity;
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 d = path.GetPoint(i) - c;
+                if (d.sqrMagnitude < 1e-10f) continue;
+                float a = Mathf.Abs(Mathf.Atan2(d.y, d.x));
+                if (a < bestAbs) { bestAbs = a; best = i; }
+            }
+            if (best == 0) return;
+
+            // 4. Rotate the node list so `best` becomes index 0. One
+            //    pass into the scratch list, then copy back — keeps the
+            //    operation allocation-free on the steady-state path.
+            s_alignTmp.Clear();
+            for (int i = 0; i < n; i++) s_alignTmp.Add(path.nodes[(best + i) % n]);
+            for (int i = 0; i < n; i++) path.nodes[i] = s_alignTmp[i];
+        }
 
         public void Build(VectorPath outPath)
         {
@@ -144,6 +231,30 @@ namespace VMG.Core
             }
 
             int N = Mathf.Max(8, resampleCount);
+
+            // Align each contributing closed path before resampling: pick
+            // the node closest to the +x axis (relative to the path's
+            // centroid) as index 0, and flip CW paths to CCW. Without
+            // this, primitives with different "first vertex" conventions
+            // (Circle starts at +x, Rectangle at -x/-y, Polygon at +y)
+            // blend index-by-index into a rotated, shrunken intermediate
+            // shape. Open paths are left alone — their endpoints are
+            // semantically meaningful, so cyclic shift would change the
+            // shape rather than just reindex it.
+            //
+            // Preserve mode skips this: the user is morphing between the
+            // same shape at different rotations, and wants the rotation
+            // to read in the morph instead of being normalized away.
+            if (alignment == BlendAlignment.Auto)
+            {
+                for (int i = 0; i < MaxSlots; i++)
+                {
+                    var slot = GetSlot(i);
+                    if (slot.intensity <= 0f) continue;
+                    if (s_paths[i].Count < 2) continue;
+                    if (s_paths[i].closed) AlignClosedPath(s_paths[i]);
+                }
+            }
 
             // Resample every contributing path to N points.
             for (int i = 0; i < MaxSlots; i++)

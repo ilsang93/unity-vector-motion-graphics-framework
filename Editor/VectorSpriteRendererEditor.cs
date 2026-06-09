@@ -136,6 +136,10 @@ namespace VMG.EditorTools
             var stack = renderer.ShapeStack;
             m_ActiveSlot = FreePathSceneHandles.DrawSlotOverlay(m_ActiveSlot, ref stack);
 
+            // Faint guides for the other 3 slots — helps the user line up
+            // a multi-slot blend without switching the overlay back and forth.
+            FreePathSceneHandles.DrawInactiveSlotGuides(renderer.transform, ref stack, m_ActiveSlot);
+
             // Each slot is at m_ShapeStack.m_Slot{N}.shape — that's the
             // SerializedProperty path the handle code needs in order to
             // route writes through SerializedProperty (and therefore

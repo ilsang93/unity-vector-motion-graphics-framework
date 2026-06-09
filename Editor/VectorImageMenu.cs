@@ -10,8 +10,13 @@ namespace VMG.EditorTools
 {
     internal static class VectorImageMenu
     {
-        // Placed right below the default UI/Image entry (sortKey 2030).
-        [MenuItem("GameObject/UI/Vector Image", false, 2031)]
+        // Unity 6's UGUI renamed the menu category from "UI" to "UI (Canvas)".
+        // Sitting in the old "UI" path produced a second, sibling category in
+        // the GameObject menu — visually confusing. Match the canonical
+        // category so Vector Image appears alongside Image / Raw Image / Panel.
+        // Priority 2004 places it right after Panel (Image=2001, RawImage=2002,
+        // Panel=2003) within the same separator group.
+        [MenuItem("GameObject/UI (Canvas)/Vector Image", false, 2004)]
         private static void CreateVectorImage(MenuCommand command)
         {
             GameObject parent = command.context as GameObject;

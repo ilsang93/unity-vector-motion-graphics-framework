@@ -1,0 +1,19 @@
+{
+    "name": "VMG.Editor.Animation",
+    "rootNamespace": "VMG.EditorTools.Animation",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.Animation"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

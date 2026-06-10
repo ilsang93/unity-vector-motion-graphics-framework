@@ -1,0 +1,111 @@
+using UnityEditor;
+using UnityEngine;
+using VMG.Animation;
+
+namespace VMG.EditorTools.Animation
+{
+    public class VMGTimelineWindow : EditorWindow
+    {
+        [SerializeField] VMGAnimator m_Animator;
+        VMGTimelineView m_Timeline;
+        VMGEditorPlayback m_Playback;
+
+        public static void OpenFor(VMGAnimator animator)
+        {
+            var w = GetWindow<VMGTimelineWindow>(false, "VMG Timeline", true);
+            w.Bind(animator);
+            w.Show();
+        }
+
+        public static void FocusFor(VMGAnimator animator)
+        {
+            var w = GetWindow<VMGTimelineWindow>(false, "VMG Timeline", true);
+            w.Bind(animator);
+            w.Focus();
+        }
+
+        public static bool IsOpenFor(VMGAnimator animator)
+        {
+            foreach (var w in Resources.FindObjectsOfTypeAll<VMGTimelineWindow>())
+            {
+                if (w != null && w.m_Animator == animator) return true;
+            }
+            return false;
+        }
+
+        void Bind(VMGAnimator animator)
+        {
+            m_Animator = animator;
+            EnsureRuntime();
+            m_Playback.Bind(animator);
+        }
+
+        void EnsureRuntime()
+        {
+            if (m_Timeline == null) m_Timeline = new VMGTimelineView { DrawAddTrackBarEnabled = true };
+            if (m_Playback == null) m_Playback = new VMGEditorPlayback();
+        }
+
+        void OnEnable()
+        {
+            EnsureRuntime();
+            if (m_Animator != null) m_Playback.Bind(m_Animator);
+            Selection.selectionChanged += OnSelectionChanged;
+            VMGTimelineSelection.Changed += OnTimelineSelectionChanged;
+            VMGTimelineSelection.DataChanged += OnTimelineSelectionChanged;
+        }
+
+        void OnDisable()
+        {
+            Selection.selectionChanged -= OnSelectionChanged;
+            VMGTimelineSelection.Changed -= OnTimelineSelectionChanged;
+            VMGTimelineSelection.DataChanged -= OnTimelineSelectionChanged;
+            if (m_Playback != null) m_Playback.Unbind();
+        }
+
+        void OnTimelineSelectionChanged()
+        {
+            Repaint();
+        }
+
+        void OnSelectionChanged()
+        {
+            var sel = Selection.activeGameObject;
+            if (sel == null) return;
+            var a = sel.GetComponent<VMGAnimator>();
+            if (a != null && a != m_Animator)
+            {
+                Bind(a);
+                Repaint();
+            }
+        }
+
+        void OnGUI()
+        {
+            EnsureRuntime();
+            if (m_Animator == null)
+            {
+                EditorGUILayout.HelpBox("Select a GameObject with a VMGAnimator to edit its clip here.", MessageType.Info);
+                return;
+            }
+            if (m_Animator.clip == null)
+            {
+                EditorGUILayout.HelpBox($"'{m_Animator.name}' has no clip assigned.", MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.LabelField($"Animator: {m_Animator.name}", EditorStyles.boldLabel);
+
+            m_Playback.Bind(m_Animator);
+            var record = VMGEditorRecord.For(m_Animator);
+            if (record != null)
+            {
+                m_Playback.Record = record;
+                record.DrawControls();
+            }
+            m_Timeline.Playback = m_Playback;
+            m_Playback.DrawControls();
+            m_Timeline.Draw(m_Animator);
+        }
+    }
+}

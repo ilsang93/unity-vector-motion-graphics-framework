@@ -56,6 +56,7 @@ namespace VMG.Animation.Serialization
             clip.duration = dto.duration;
             clip.loop = dto.loop;
             clip.autoFitDuration = dto.autoFitDuration;
+            clip.snapDivisor = dto.snapDivisor;
             clip.tracks.Clear();
             clip.events.Clear();
             clip.hierarchy = new VMGHierarchySnapshot();

@@ -66,7 +66,8 @@ namespace VMG.Animation
             var go = FindGameObject(track.binding.gameObjectPath);
             if (go == null)
             {
-                Debug.LogError($"[VMG.Animation] gameObject path '{track.binding.gameObjectPath}' not found under '{m_Root.name}'");
+                string children = ListChildNames(m_Root);
+                Debug.LogError($"[VMG.Animation] gameObject path '{track.binding.gameObjectPath}' not found under '{m_Root.name}'. Existing children: [{children}]");
                 return false;
             }
 
@@ -103,6 +104,20 @@ namespace VMG.Animation
                 writer = writer,
             };
             return true;
+        }
+
+        static string ListChildNames(Transform root)
+        {
+            if (root == null || root.childCount == 0) return "<none>";
+            var names = new System.Text.StringBuilder();
+            for (int i = 0; i < root.childCount; i++)
+            {
+                if (i > 0) names.Append(", ");
+                names.Append('\'');
+                names.Append(root.GetChild(i).name);
+                names.Append('\'');
+            }
+            return names.ToString();
         }
 
         GameObject FindGameObject(string path)

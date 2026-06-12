@@ -19,6 +19,8 @@ namespace VMG.EditorTools.Animation
         static readonly Color k_AltRowColor = new Color(1f, 1f, 1f, 0.03f);
         static readonly Color k_RulerColor = new Color(0.22f, 0.22f, 0.22f, 1f);
         static readonly Color k_GridColor = new Color(1f, 1f, 1f, 0.08f);
+        static readonly Color k_SnapGridColor = new Color(1f, 1f, 1f, 0.04f);
+        const float k_MinSnapGridPixels = 6f;
         static readonly Color k_BorderColor = new Color(0f, 0f, 0f, 0.6f);
         static readonly Color k_KeyColor = new Color(1f, 0.85f, 0.3f, 1f);
         static readonly Color k_KeySelectedColor = new Color(1f, 1f, 1f, 1f);
@@ -38,6 +40,10 @@ namespace VMG.EditorTools.Animation
         int m_DraggingKey = -1;
         bool m_Scrubbing;
         bool m_KeyDragMoved;
+
+        // Undo group id stamped at MouseDown so MouseUp can collapse all the
+        // per-delta Undo entries into a single Ctrl+Z step.
+        int m_DragUndoGroup = -1;
 
         // Multi-drag state.
         struct DragSnapshot { public int track; public int key; public float originalTime; }
@@ -107,6 +113,8 @@ namespace VMG.EditorTools.Animation
             maxScroll = Mathf.Max(0f, contentWidth - viewWidth);
             m_ScrollX = Mathf.Clamp(m_ScrollX, 0f, maxScroll);
 
+            var gridRect = new Rect(tlLeft, rect.y, viewWidth, totalHeight - k_ScrollbarHeight - 2f);
+            DrawSnapGrid(gridRect, clip, duration, pps, m_ScrollX);
             DrawRuler(rulerRect, duration, pps, m_ScrollX);
 
             EditorGUI.DrawRect(new Rect(rect.x, eventRowRect.y, k_LabelWidth, eventRowRect.height), k_RulerColor);
@@ -135,6 +143,15 @@ namespace VMG.EditorTools.Animation
         static float XToTime(float x, float tlLeft, float pps, float scrollX) =>
             (x - tlLeft + scrollX) / Mathf.Max(pps, 0.0001f);
 
+        /// Snap a time value to the clip's snap divisor. Shift held =
+        /// caller passes shiftHeld=true to bypass snap.
+        static float SnapTime(float t, VMGAnimationClip clip, bool shiftHeld)
+        {
+            if (shiftHeld || clip == null || clip.snapDivisor <= 0) return t;
+            float step = 1f / clip.snapDivisor;
+            return Mathf.Round(t / step) * step;
+        }
+
         // ---------- drawing ----------
 
         static void DrawBorder(Rect rect)
@@ -144,6 +161,26 @@ namespace VMG.EditorTools.Animation
             EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - 1f, rect.width, 1f), c);
             EditorGUI.DrawRect(new Rect(rect.x, rect.y, 1f, rect.height), c);
             EditorGUI.DrawRect(new Rect(rect.xMax - 1f, rect.y, 1f, rect.height), c);
+        }
+
+        static void DrawSnapGrid(Rect rect, VMGAnimationClip clip, float duration, float pps, float scrollX)
+        {
+            if (clip == null || clip.snapDivisor <= 0) return;
+            float step = 1f / clip.snapDivisor;
+            float pixelStep = step * pps;
+            // Hide the snap grid when it's too dense to read.
+            if (pixelStep < k_MinSnapGridPixels) return;
+
+            int first = Mathf.FloorToInt(scrollX / pps / step);
+            int last = Mathf.CeilToInt((scrollX + rect.width) / pps / step);
+            for (int i = first; i <= last; i++)
+            {
+                float t = i * step;
+                if (t < 0f || t > duration) continue;
+                float x = TimeToX(t, rect.x, pps, scrollX);
+                if (x < rect.x || x > rect.xMax) continue;
+                EditorGUI.DrawRect(new Rect(x, rect.y, 1f, rect.height), k_SnapGridColor);
+            }
         }
 
         static void DrawRuler(Rect rect, float duration, float pps, float scrollX)
@@ -447,7 +484,7 @@ namespace VMG.EditorTools.Animation
                     {
                         if (Playback != null && Playback.IsPlaying) Playback.Pause();
                         Playback?.EnsureBaselineCaptured();
-                        ScrubTo(animator, e.mousePosition.x, tlLeft, pps, scrollX, duration);
+                        ScrubTo(animator, e.mousePosition.x, tlLeft, pps, scrollX, duration, clip, e.shift);
                         m_Scrubbing = true;
                         e.Use();
                         GUI.changed = true;
@@ -461,6 +498,8 @@ namespace VMG.EditorTools.Animation
                             {
                                 m_Selection.SelectEvent(evIdx);
                                 m_DraggingEvent = evIdx;
+                                Undo.IncrementCurrentGroup();
+                                m_DragUndoGroup = Undo.GetCurrentGroup();
                                 if (UnityEditor.Selection.activeGameObject != animator.gameObject)
                                     UnityEditor.Selection.activeGameObject = animator.gameObject;
                                 e.Use();
@@ -514,6 +553,8 @@ namespace VMG.EditorTools.Animation
                                 m_DraggingTrack = trackIdx;
                                 m_DraggingKey = keyIdx;
                                 m_KeyDragMoved = false;
+                                Undo.IncrementCurrentGroup();
+                                m_DragUndoGroup = Undo.GetCurrentGroup();
                                 // If the clicked key is part of a multi-selection,
                                 // snapshot all selected keys for delta drag.
                                 if (m_Selection.IsMulti && m_Selection.Contains(trackIdx, keyIdx))
@@ -569,13 +610,14 @@ namespace VMG.EditorTools.Animation
                     if (m_Scrubbing)
                     {
                         Playback?.EnsureBaselineCaptured();
-                        ScrubTo(animator, e.mousePosition.x, tlLeft, pps, scrollX, duration);
+                        ScrubTo(animator, e.mousePosition.x, tlLeft, pps, scrollX, duration, clip, e.shift);
                         e.Use();
                         return;
                     }
                     if (m_DraggingEvent >= 0 && m_DraggingEvent < clip.events.Count)
                     {
                         float et = XToTime(e.mousePosition.x, tlLeft, pps, scrollX);
+                        et = SnapTime(et, clip, e.shift);
                         et = Mathf.Max(0f, et);
                         var ev = clip.events[m_DraggingEvent];
                         if (ev.time != et)
@@ -607,7 +649,11 @@ namespace VMG.EditorTools.Animation
                     if (m_MultiDragActive)
                     {
                         float delta = mouseT - m_DragAnchorTime;
-                        if (e.shift) delta = Mathf.Round(delta / 0.05f) * 0.05f;
+                        if (clip.snapDivisor > 0 && !e.shift)
+                        {
+                            float step = 1f / clip.snapDivisor;
+                            delta = Mathf.Round(delta / step) * step;
+                        }
                         if (delta == 0f) { e.Use(); break; }
                         Undo.RecordObject(clip, "Move VMG Keys");
                         foreach (var snap in m_DragSnapshots)
@@ -627,8 +673,7 @@ namespace VMG.EditorTools.Animation
                     }
                     var track = clip.tracks[m_DraggingTrack];
                     if (m_DraggingKey >= track.keys.Count) return;
-                    float t = mouseT;
-                    if (e.shift) t = Mathf.Round(t / 0.05f) * 0.05f;
+                    float t = SnapTime(mouseT, clip, e.shift);
                     t = Mathf.Clamp(t, 0f, duration);
                     var k = track.keys[m_DraggingKey];
                     if (k.time != t)
@@ -675,6 +720,16 @@ namespace VMG.EditorTools.Animation
                             var track = clip.tracks[m_DraggingTrack];
                             SortKeysAndUpdateSelection(track);
                         }
+                        if (m_DragUndoGroup >= 0)
+                        {
+                            Undo.CollapseUndoOperations(m_DragUndoGroup);
+                            Undo.SetCurrentGroupName(m_MultiDragActive ? "Move VMG Keys" : "Move VMG Key");
+                        }
+                    }
+                    else if (m_DraggingEvent >= 0 && m_DragUndoGroup >= 0)
+                    {
+                        Undo.CollapseUndoOperations(m_DragUndoGroup);
+                        Undo.SetCurrentGroupName("Move VMG Event");
                     }
                     else if (m_PendingShiftToggle)
                     {
@@ -688,6 +743,7 @@ namespace VMG.EditorTools.Animation
                     m_DragSnapshots.Clear();
                     m_PendingShiftToggle = false;
                     m_DraggingEvent = -1;
+                    m_DragUndoGroup = -1;
                     break;
                 }
             }
@@ -722,9 +778,10 @@ namespace VMG.EditorTools.Animation
             return false;
         }
 
-        static void ScrubTo(VMGAnimator animator, float px, float tlLeft, float pps, float scrollX, float duration)
+        static void ScrubTo(VMGAnimator animator, float px, float tlLeft, float pps, float scrollX, float duration, VMGAnimationClip clip, bool shiftHeld)
         {
             float t = XToTime(px, tlLeft, pps, scrollX);
+            t = SnapTime(t, clip, shiftHeld);
             t = Mathf.Clamp(t, 0f, duration);
             float u = duration > 0f ? t / duration : 0f;
             animator.progress = u;
@@ -735,7 +792,8 @@ namespace VMG.EditorTools.Animation
 
         void ShowTrackContextMenu(VMGAnimationClip clip, int trackIdx, Vector2 mousePos, float tlLeft, float pps, float scrollX, float duration)
         {
-            float t = Mathf.Clamp(XToTime(mousePos.x, tlLeft, pps, scrollX), 0f, duration);
+            float t = SnapTime(XToTime(mousePos.x, tlLeft, pps, scrollX), clip, shiftHeld: false);
+            t = Mathf.Clamp(t, 0f, duration);
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent($"Add Key at {t:0.###}s"), false, () =>
             {
@@ -842,7 +900,8 @@ namespace VMG.EditorTools.Animation
 
         void ShowEventRowContextMenu(VMGAnimationClip clip, Vector2 mousePos, float tlLeft, float pps, float scrollX, float duration)
         {
-            float t = Mathf.Clamp(XToTime(mousePos.x, tlLeft, pps, scrollX), 0f, Mathf.Max(0f, duration));
+            float t = SnapTime(XToTime(mousePos.x, tlLeft, pps, scrollX), clip, shiftHeld: false);
+            t = Mathf.Clamp(t, 0f, Mathf.Max(0f, duration));
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent($"Add Event at {t:0.###}s"), false, () =>
             {

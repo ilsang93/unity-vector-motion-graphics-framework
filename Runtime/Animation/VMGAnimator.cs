@@ -1,8 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using VMG.Animation.Core;
 
 namespace VMG.Animation
 {
@@ -11,6 +11,10 @@ namespace VMG.Animation
     public class VMGAnimator : MonoBehaviour
     {
         public VMGAnimationClip clip;
+
+        [Tooltip("Optional VMGFx script (plain TextAsset). When set, the script's hierarchy is built under this GameObject on enable, and its animations drive playback. Script takes priority over clip when both are assigned.")]
+        public TextAsset script;
+
         public VMGPlayMode mode = VMGPlayMode.Internal;
 
         [Tooltip("Normalized playhead 0..1. Input in External mode, output in Internal mode.")]
@@ -28,8 +32,22 @@ namespace VMG.Animation
 
         public event Action AfterSample;
 
-        VMGBindingResolver m_Resolver;
+        // Raised when a script's 'call' statement crosses the playhead. Listener
+        // receives the event name. No-op listener gets a console log instead.
+        public event Action<string> ScriptEvent;
+
+        // ---- Internal state ----
+
+        // Clip-mode artefacts (kept exactly as before).
+        VMGAnimation m_Anim;
         VMGAnimationClip m_BoundClip;
+
+        // Script-mode artefacts.
+        VMGFxCompiled m_Script;
+        TextAsset m_BoundScript;
+        string m_BoundScriptHash;
+        bool m_ScriptModeActive;
+
         float m_LastProgress;
         bool m_HasLastProgress;
 
@@ -39,7 +57,7 @@ namespace VMG.Animation
 
         void OnEnable()
         {
-            EnsureResolved();
+            EnsureCompiled();
         }
 
         void OnDisable()
@@ -51,7 +69,7 @@ namespace VMG.Animation
         public void Play()
         {
             if (mode != VMGPlayMode.Internal) return;
-            EnsureResolved();
+            EnsureCompiled();
             IsPlaying = true;
             SampleAndWrite(progress, fireEvents: false);
         }
@@ -77,7 +95,7 @@ namespace VMG.Animation
             if (mode == VMGPlayMode.External)
                 return Task.FromException(new InvalidOperationException("PlayAsync is only valid in Internal mode."));
 
-            EnsureResolved();
+            EnsureCompiled();
 
             CancelPlayAsync();
             m_PlayTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -92,7 +110,7 @@ namespace VMG.Animation
 
         public void Sample(float normalizedTime)
         {
-            EnsureResolved();
+            EnsureCompiled();
             SampleAndWrite(Mathf.Clamp01(normalizedTime), fireEvents: false);
         }
 
@@ -103,16 +121,19 @@ namespace VMG.Animation
             // shows a live preview), but we don't want self-advancing time
             // outside Play mode — that's the editor preview's job.
             if (!Application.isPlaying) return;
-            if (mode != VMGPlayMode.Internal || !IsPlaying || clip == null) return;
-            if (clip.duration <= 0f) return;
+            if (mode != VMGPlayMode.Internal || !IsPlaying) return;
+            float dur = EffectiveDuration();
+            if (dur <= 0f) return;
 
-            float delta = Time.deltaTime * speed / clip.duration;
+            float delta = Time.deltaTime * speed / dur;
             float next = progress + delta;
             bool cycleCompleted = false;
 
+            bool loop = m_ScriptModeActive ? false : (clip != null && clip.loop);
+
             if (next >= 1f)
             {
-                if (clip.loop)
+                if (loop)
                 {
                     while (next >= 1f) next -= 1f;
                     cycleCompleted = true;
@@ -136,25 +157,44 @@ namespace VMG.Animation
 
         void LateUpdate()
         {
-            if (clip == null) return;
+            if (!m_ScriptModeActive && clip == null) return;
 
             bool fireEvents = mode == VMGPlayMode.Internal || fireEventsInExternalMode;
             SampleAndWrite(progress, fireEvents);
         }
 
-        void EnsureResolved()
+        void EnsureCompiled()
         {
-            if (m_Resolver != null && m_BoundClip == clip) return;
+            // Script takes priority over clip when both are assigned.
+            if (script != null)
+            {
+                EnsureScriptCompiled();
+                return;
+            }
+
+            // Tear down stale script-mode state if the script was removed.
+            if (m_ScriptModeActive)
+            {
+                TeardownScript();
+            }
+
+            if (clip == null)
+            {
+                if (IsReady) { IsReady = false; ReadyChanged?.Invoke(); }
+                return;
+            }
+
+            if (m_Anim != null && m_BoundClip == clip) return;
 
             bool wasReady = IsReady;
             IsReady = false;
 
-            m_Resolver = new VMGBindingResolver(transform);
+            // Compile rebuilds the binding resolver internally and produces a
+            // VMGAnimation whose onSampled fires after every write — that's
+            // the parity hook for AfterSample (used by editor Record mode).
+            m_Anim = VMGClipCompiler.Compile(clip, transform);
+            m_Anim.onSampled += OnAnimSampled;
             m_BoundClip = clip;
-            if (clip != null)
-            {
-                m_Resolver.Resolve(clip);
-            }
 
             m_HasLastProgress = false;
 
@@ -169,15 +209,98 @@ namespace VMG.Animation
             }
         }
 
+        void EnsureScriptCompiled()
+        {
+            string hash = ComputeScriptHash(script);
+            if (m_ScriptModeActive && m_BoundScript == script && m_BoundScriptHash == hash) return;
+
+            if (clip != null)
+            {
+                Debug.LogWarning($"[VMG.Animation] VMGAnimator on '{name}' has both `script` and `clip` assigned; script takes priority. Clear `clip` to silence this warning.", this);
+            }
+
+            bool wasReady = IsReady;
+            IsReady = false;
+
+            // Drop any clip-mode core; script-mode has its own pipeline.
+            m_Anim = null;
+            m_BoundClip = null;
+
+            // Detach the previous compile from the engine before replacing.
+            if (m_Script != null)
+            {
+                m_Script.DetachFromEngine();
+                m_Script.OnEvent -= OnScriptEvent;
+            }
+
+            try
+            {
+                m_Script = VMGFxScript.Compile(script.text, transform);
+                m_Script.OnEvent += OnScriptEvent;
+                // VMGAnimator drives Seek directly each LateUpdate; the engine
+                // must NOT tick these animations standalone.
+                m_Script.DetachFromEngine();
+                m_ScriptModeActive = true;
+                m_BoundScript = script;
+                m_BoundScriptHash = hash;
+                m_HasLastProgress = false;
+                IsReady = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[VMG.Animation] script compile failed on '{name}': {ex.Message}", this);
+                m_Script = null;
+                m_ScriptModeActive = false;
+                m_BoundScript = null;
+                m_BoundScriptHash = null;
+                IsReady = false;
+            }
+
+            if (wasReady != IsReady || IsReady) ReadyChanged?.Invoke();
+        }
+
+        void TeardownScript()
+        {
+            if (m_Script != null)
+            {
+                m_Script.DetachFromEngine();
+                m_Script.OnEvent -= OnScriptEvent;
+                m_Script = null;
+            }
+            m_BoundScript = null;
+            m_BoundScriptHash = null;
+            m_ScriptModeActive = false;
+        }
+
+        void OnAnimSampled(VMGAnimation _)
+        {
+            AfterSample?.Invoke();
+        }
+
+        void OnScriptEvent(string evName)
+        {
+            ScriptEvent?.Invoke(evName);
+        }
+
         void SampleAndWrite(float t, bool fireEvents)
         {
-            if (m_Resolver == null) return;
-            float clipTime = clip != null ? t * clip.duration : 0f;
+            float duration = EffectiveDuration();
 
-            foreach (var rt in m_Resolver.Tracks)
+            if (m_ScriptModeActive && m_Script != null)
             {
-                WriteTrack(rt, clipTime);
+                m_Script.SeekAll(t * duration);
+                AfterSample?.Invoke();
             }
+            else if (m_Anim != null)
+            {
+                // progress is authoritative in the adapter — Seek drives the
+                // VMGAnimation to the requested iteration time. Seek uses
+                // fireCallbacks:false (no onBegin/onUpdate/onLoop/onComplete),
+                // but OnAfterRender — which writes tween values and fires
+                // onSampled — runs unconditionally.
+                m_Anim.Seek(t * duration);
+            }
+            else return;
 
             if (fireEvents)
             {
@@ -186,82 +309,21 @@ namespace VMG.Animation
 
             m_LastProgress = t;
             m_HasLastProgress = true;
-
-            AfterSample?.Invoke();
         }
 
-        void WriteTrack(VMGResolvedTrack rt, float clipTime)
+        float EffectiveDuration()
         {
-            switch (rt.track.type)
-            {
-                case VMGChannelType.Float:
-                {
-                    float v = VMGTrackEvaluator.EvaluateFloat(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastFloat == v) return;
-                    rt.writer.Write(v);
-                    rt.lastFloat = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Int:
-                {
-                    int v = VMGTrackEvaluator.EvaluateInt(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastInt == v) return;
-                    rt.writer.Write(v);
-                    rt.lastInt = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Bool:
-                {
-                    bool v = VMGTrackEvaluator.EvaluateBool(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastBool == v) return;
-                    rt.writer.Write(v);
-                    rt.lastBool = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Color:
-                {
-                    Color v = VMGTrackEvaluator.EvaluateColor(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastColor == v) return;
-                    rt.writer.Write(v);
-                    rt.lastColor = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Vector2:
-                {
-                    Vector4 v = VMGTrackEvaluator.EvaluateVector(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastVector == v) return;
-                    rt.writer.Write((Vector2)v);
-                    rt.lastVector = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Vector3:
-                {
-                    Vector4 v = VMGTrackEvaluator.EvaluateVector(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastVector == v) return;
-                    rt.writer.Write((Vector3)v);
-                    rt.lastVector = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-                case VMGChannelType.Vector4:
-                {
-                    Vector4 v = VMGTrackEvaluator.EvaluateVector(rt.track, clipTime);
-                    if (rt.hasLastValue && rt.lastVector == v) return;
-                    rt.writer.Write(v);
-                    rt.lastVector = v;
-                    rt.hasLastValue = true;
-                    return;
-                }
-            }
+            if (m_ScriptModeActive && m_Script != null) return m_Script.TotalDuration;
+            return clip != null ? clip.duration : 0f;
         }
 
         void FireEventsInRange(float fromProgress, float toProgress)
         {
+            // Script-mode events live on the timeline as Call slots — the
+            // VMGTimeline itself fires them as progress sweeps. No per-event
+            // loop here.
+            if (m_ScriptModeActive) return;
+
             if (clip == null || clip.events == null) return;
             if (fromProgress == toProgress) return;
 
@@ -288,6 +350,21 @@ namespace VMG.Animation
                     if ((e.time > fromT && e.time <= duration) || (e.time >= 0f && e.time <= toT))
                         e.invoke?.Invoke();
                 }
+            }
+        }
+
+        static string ComputeScriptHash(TextAsset t)
+        {
+            if (t == null) return null;
+            // Cheap content hash so a re-saved TextAsset triggers a recompile
+            // without keeping the full string around.
+            string s = t.text;
+            if (string.IsNullOrEmpty(s)) return "";
+            unchecked
+            {
+                int h = 17;
+                for (int i = 0; i < s.Length; i++) h = h * 31 + s[i];
+                return h.ToString() + ":" + s.Length;
             }
         }
 

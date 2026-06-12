@@ -14,6 +14,10 @@ namespace VMG.Animation
         [Tooltip("When on, duration follows the latest key/event time automatically. Turn off to set duration manually.")]
         public bool autoFitDuration = true;
 
+        [Tooltip("Divides 1 second into N snap intervals. Used by editor drag/scrub/add-key (Shift to temporarily disable). 0 = no snap. Default 60 means keys snap to 1/60 second.")]
+        [Min(0)]
+        public int snapDivisor = 60;
+
         public List<VMGAnimationTrack> tracks = new List<VMGAnimationTrack>();
 
         public List<VMGAnimationEvent> events = new List<VMGAnimationEvent>();

@@ -18,6 +18,11 @@ namespace VMG.Animation
             m_BoxStack = new object[path.segments.Length];
         }
 
+        // Used by VMGTimeline.Remove(target) to find tweens bound to a
+        // particular component. Object reference equality is enough — writers
+        // are constructed with a concrete Component instance.
+        public bool TargetEquals(UnityEngine.Object other) => ReferenceEquals(m_Target, other);
+
         public bool IsTypeCompatible(out string error)
         {
             var leaf = m_Path.leafType;

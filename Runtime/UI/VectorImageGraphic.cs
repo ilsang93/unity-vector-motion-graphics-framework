@@ -34,6 +34,7 @@ namespace VMG.UI
         public ref FillStyle Fill => ref m_Fill;
         public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
         public ref TrimPathModifier TrimModifier => ref m_Trim;
+        public bool FitToRect { get => m_FitToRect; set { m_FitToRect = value; SetVerticesDirty(); } }
         public Texture Texture { get => m_Texture; set { m_Texture = value; SetMaterialDirty(); } }
 
         public override Texture mainTexture => m_Texture != null ? m_Texture : base.mainTexture;

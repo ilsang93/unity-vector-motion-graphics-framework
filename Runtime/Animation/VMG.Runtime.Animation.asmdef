@@ -2,7 +2,9 @@
     "name": "VMG.Runtime.Animation",
     "rootNamespace": "VMG.Animation",
     "references": [
-        "VMG.Runtime"
+        "VMG.Runtime",
+        "VMG.Runtime.UI",
+        "VMG.Runtime.World"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

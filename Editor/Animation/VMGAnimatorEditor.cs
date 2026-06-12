@@ -81,6 +81,7 @@ namespace VMG.EditorTools.Animation
                 var durationProp = clipSo.FindProperty("duration");
                 var loopProp = clipSo.FindProperty("loop");
                 var autoFitProp = clipSo.FindProperty("autoFitDuration");
+                var snapProp = clipSo.FindProperty("snapDivisor");
                 clipSo.Update();
                 EditorGUILayout.PropertyField(autoFitProp, new GUIContent("Auto-fit Duration"));
                 using (new EditorGUI.DisabledScope(autoFitProp.boolValue))
@@ -88,6 +89,8 @@ namespace VMG.EditorTools.Animation
                     EditorGUILayout.PropertyField(durationProp, new GUIContent("Duration (s)"));
                 }
                 EditorGUILayout.PropertyField(loopProp, new GUIContent("Loop"));
+                EditorGUILayout.PropertyField(snapProp, new GUIContent("Snap (per second)"));
+                EditorGUILayout.HelpBox("Drag/scrub/add-key snaps to 1/N second intervals. Hold Shift to disable snap temporarily. Set 0 for no snap.", MessageType.None);
                 clipSo.ApplyModifiedProperties();
             }
         }

@@ -27,6 +27,7 @@ namespace VMG.Animation.Serialization
             dto.duration = clip.duration;
             dto.loop = clip.loop;
             dto.autoFitDuration = clip.autoFitDuration;
+            dto.snapDivisor = clip.snapDivisor;
 
             if (clip.tracks != null)
             {

@@ -54,12 +54,25 @@ namespace VMG.Animation.Core
         // hasFrom (same lifecycle as a normal lazy capture).
         bool m_HasResolvedTo;
 
+        // Revert baseline is captured ONCE per channel per (re)play cycle,
+        // independently of hasFrom — FunctionValue.Refresh() clears hasFrom
+        // but must not move the revert origin (anime.js parity: revert()
+        // returns to "before THIS animation began", not "before last
+        // Refresh"). Cleared by VMGAnimation.Revert() so a Revert→Restart
+        // recaptures.
+        bool m_HasRegisteredRevert;
+
         public override void Evaluate(float iterationTime)
         {
             // Resolve to-side FunctionValue once (anime.js calls the function
             // when the animation begins, then caches). Refresh() clears
             // m_HasResolvedTo so the next Evaluate re-invokes.
             if (hasAnyFn && !m_HasResolvedTo) ResolveTo();
+
+            // Revert baseline: take a reader snapshot once, before any write.
+            // Goes through the same reader (not the FunctionValue from-side)
+            // so revert truly restores the pre-animation value.
+            if (!m_HasRegisteredRevert) RegisterRevertBaseline();
 
             // Lazy capture of "from" the first time we render inside the
             // window. anime.js does the same: a tween's start value is the
@@ -132,6 +145,34 @@ namespace VMG.Animation.Core
                     return;
                 }
             }
+        }
+
+        void RegisterRevertBaseline()
+        {
+            m_HasRegisteredRevert = true;
+            if (owner == null || writer == null || reader == null) return;
+            object boxed = reader.Read();
+            if (boxed == null) return;
+            VMGAnimation.RevertWriteKind kind;
+            switch (channelType)
+            {
+                case VMGChannelType.Float: kind = VMGAnimation.RevertWriteKind.Float; break;
+                case VMGChannelType.Int: kind = VMGAnimation.RevertWriteKind.Int; break;
+                case VMGChannelType.Bool: kind = VMGAnimation.RevertWriteKind.Bool; break;
+                case VMGChannelType.Color: kind = VMGAnimation.RevertWriteKind.Color; break;
+                case VMGChannelType.Vector2: kind = VMGAnimation.RevertWriteKind.Vector2; break;
+                case VMGChannelType.Vector3: kind = VMGAnimation.RevertWriteKind.Vector3; break;
+                case VMGChannelType.Vector4: kind = VMGAnimation.RevertWriteKind.Vector4; break;
+                default: return;
+            }
+            owner.EnsureRevertBaseline(writer, kind, boxed);
+        }
+
+        // Called by VMGAnimation.Revert(): drop the captured flag so the
+        // next play cycle re-snapshots the (now restored) channel.
+        internal void ResetRevertCaptureFlag()
+        {
+            m_HasRegisteredRevert = false;
         }
 
         void CaptureFrom()

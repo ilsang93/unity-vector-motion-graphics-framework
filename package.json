@@ -1,6 +1,6 @@
 {
   "name": "com.ilsang.vmg",
-  "version": "0.15.0",
+  "version": "0.26.0",
   "displayName": "Ilsang VMG - Vector Motion Graphics Framework",
   "description": "Procedural vector motion graphics runtime for Unity. AE-style shape layers (path/stroke/fill/trim/round corner) with full Animator/Timeline integration for both UGUI and world-space rendering.",
   "unity": "6000.3",
@@ -29,11 +29,6 @@
       "displayName": "DOTween Integration",
       "description": "Demonstrates DOFade / DOColor / DOSize / DOTrim / DOCornerRadius extensions. Requires DOTween + VMG_DOTWEEN define.",
       "path": "Samples~/TweenIntegration"
-    },
-    {
-      "displayName": "Animator JSON Sample",
-      "description": "Pulse motion-graphics test JSON for VMGAnimator import. See README for expected hierarchy (Ring/Dot/Burst).",
-      "path": "Samples~/AnimatorSample"
     },
     {
       "displayName": "SVG Import",

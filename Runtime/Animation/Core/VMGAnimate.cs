@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using VMG.Svg;
 
 namespace VMG.Animation.Core
 {
@@ -29,6 +30,15 @@ namespace VMG.Animation.Core
         float m_EndDelay;
         VMGEase m_Ease = VMGEase.From(VMGEasingPreset.Ease);
         bool m_HasEase;
+
+        // MotionPath state. Single per-VMGAnimate: a target has one curve it
+        // follows at a time. anime.js's createMotionPath returns x/y/angle
+        // accessors bound to one path; same semantic. If the user calls
+        // .AlongPath() twice the second wins (matches "later config replaces
+        // earlier" elsewhere in the builder).
+        VMGMotionPath m_PendingMotion;
+        bool m_AutoRotate;
+        float m_AutoRotateOffsetDeg;
 
         bool m_Finalized;
         bool m_OwnedByTimeline;
@@ -86,6 +96,50 @@ namespace VMG.Animation.Core
         public VMGAnimate FromTo(string path, Func<Vector2> from, Func<Vector2> to) => AddFnTween(path, VMGChannelType.Vector2, fromVector2Fn: from, toVector2Fn: to, hasFrom: true);
         public VMGAnimate FromTo(string path, Func<Vector3> from, Func<Vector3> to) => AddFnTween(path, VMGChannelType.Vector3, fromVector3Fn: from, toVector3Fn: to, hasFrom: true);
         public VMGAnimate FromTo(string path, Func<Vector4> from, Func<Vector4> to) => AddFnTween(path, VMGChannelType.Vector4, fromVector4Fn: from, toVector4Fn: to, hasFrom: true);
+
+        // ------- MotionPath API -------
+
+        // Follow an arc-length parametrized curve. The target's
+        // transform.position is driven along the path; with .AutoRotate(),
+        // transform.eulerAngles.z is also written to face along the tangent.
+        // anime.js parity: createMotionPath. Calling twice replaces the
+        // pending motion path (the last call wins).
+        public VMGAnimate AlongPath(VMGShapeAsset asset, int subShapeIndex = 0)
+        {
+            if (m_Finalized) { Debug.LogError("[VMG.Animation] cannot add .AlongPath after the animation is finalized"); return this; }
+            var mp = VMGMotionPath.FromAsset(asset, subShapeIndex);
+            if (mp == null)
+            {
+                Debug.LogError($"[VMG.Animation] .AlongPath: asset '{(asset == null ? "null" : asset.name)}' has no sub-shape at index {subShapeIndex}");
+                return this;
+            }
+            m_PendingMotion = mp;
+            return this;
+        }
+
+        public VMGAnimate AlongPath(IList<Vector2> points, bool closed = false)
+        {
+            if (m_Finalized) { Debug.LogError("[VMG.Animation] cannot add .AlongPath after the animation is finalized"); return this; }
+            var mp = VMGMotionPath.FromPoints(points, closed);
+            if (mp == null)
+            {
+                Debug.LogError("[VMG.Animation] .AlongPath: points list is null or empty");
+                return this;
+            }
+            m_PendingMotion = mp;
+            return this;
+        }
+
+        // Rotate the target so its local +X axis faces along the curve's
+        // tangent. Offset is added after Atan2 — supply -90 for sprites
+        // whose "forward" is +Y, etc. No-op without a prior .AlongPath().
+        public VMGAnimate AutoRotate(float offsetDeg = 0f)
+        {
+            if (m_Finalized) { Debug.LogError("[VMG.Animation] cannot add .AutoRotate after the animation is finalized"); return this; }
+            m_AutoRotate = true;
+            m_AutoRotateOffsetDeg = offsetDeg;
+            return this;
+        }
 
         // ------- Modifier API -------
 
@@ -148,6 +202,31 @@ namespace VMG.Animation.Core
             EnsureFinalized();
             m_Anim.Stop();
             // Stop counts as natural completion for awaiters (anime.js parity).
+            m_CompletionSource?.TrySetResult(true);
+            VMGEngine.Unregister(m_Anim);
+        }
+
+        // Snap every written channel back to its pre-animation baseline and
+        // stop. anime.js parity for revert(). Without this, single-tween
+        // toggle patterns force the user to wrap in a Timeline just to get a
+        // revertable handle.
+        public void Revert()
+        {
+            EnsureFinalized();
+            m_Anim.Revert();
+            m_CompletionSource?.TrySetResult(true);
+            VMGEngine.Unregister(m_Anim);
+        }
+
+        // Stop the tween at its current channel value (no baseline restore)
+        // and clear tween flags so a follow-up Animate can recapture from
+        // here. Use for toggle/re-press patterns where the old handle is
+        // being discarded — Pause would leave it resumable with the original
+        // from→to, Revert would flash the baseline.
+        public void Cancel()
+        {
+            EnsureFinalized();
+            m_Anim.Cancel();
             m_CompletionSource?.TrySetResult(true);
             VMGEngine.Unregister(m_Anim);
         }
@@ -350,7 +429,7 @@ namespace VMG.Animation.Core
                 Debug.LogError($"[VMG.Animation] path '{path}' on {rootType.Name} compile failed: {error}");
                 return null;
             }
-            var writer = new VMGChannelWriter(m_Target, compiled, type);
+            var writer = new VMGChannelWriter(m_Target, compiled, type, path);
             if (!writer.IsTypeCompatible(out var typeError))
             {
                 Debug.LogError($"[VMG.Animation] {typeError} (path '{path}' on {rootType.Name})");
@@ -394,11 +473,77 @@ namespace VMG.Animation.Core
                 t.startTime = 0f;
                 t.endTime = dur;
                 t.ease = ease;
+                t.owner = m_Anim;
                 m_Anim.tweens.Add(t);
             }
             m_PendingTweens.Clear();
 
+            if (m_PendingMotion != null)
+            {
+                var motion = BuildMotionPathTween(m_PendingMotion, ease, dur);
+                if (motion != null)
+                {
+                    motion.owner = m_Anim;
+                    m_Anim.tweens.Add(motion);
+                }
+                m_PendingMotion = null;
+            }
+
             m_Anim.paused = false; // auto-play
+        }
+
+        // Build a single VMGMotionPathTween bound to transform.position
+        // (and optionally transform.eulerAngles.z for AutoRotate). The path
+        // is sampled in 2D and projected to XY, preserving the current Z.
+        VMGMotionPathTween BuildMotionPathTween(VMGMotionPath motion, VMGEase ease, float duration)
+        {
+            const string positionPath = "transform.position";
+            var rootType = m_Target.GetType();
+            if (!VMGFieldPathCompiler.TryCompile(rootType, positionPath, out var posCompiled, out var error))
+            {
+                Debug.LogError($"[VMG.Animation] .AlongPath: cannot bind '{positionPath}' on {rootType.Name}: {error}");
+                return null;
+            }
+            var posType = posCompiled.leafType == typeof(Vector2) ? VMGChannelType.Vector2 : VMGChannelType.Vector3;
+            var posWriter = new VMGChannelWriter(m_Target, posCompiled, posType, positionPath);
+            if (!posWriter.IsTypeCompatible(out var posErr))
+            {
+                Debug.LogError($"[VMG.Animation] .AlongPath: {posErr}");
+                return null;
+            }
+            var posReader = new VMGChannelReader(m_Target, posCompiled, posType);
+
+            var tween = new VMGMotionPathTween
+            {
+                positionWriter = posWriter,
+                positionReader = posReader,
+                path = motion,
+                ease = ease,
+                isVector3Channel = posType == VMGChannelType.Vector3,
+                startTime = 0f,
+                endTime = duration,
+            };
+
+            if (m_AutoRotate)
+            {
+                const string rotPath = "transform.eulerAngles.z";
+                if (!VMGFieldPathCompiler.TryCompile(rootType, rotPath, out var rotCompiled, out var rotError))
+                {
+                    Debug.LogWarning($"[VMG.Animation] .AutoRotate: cannot bind '{rotPath}': {rotError}. Position will still animate.");
+                }
+                else
+                {
+                    var rotWriter = new VMGChannelWriter(m_Target, rotCompiled, VMGChannelType.Float, rotPath);
+                    if (rotWriter.IsTypeCompatible(out _))
+                    {
+                        tween.rotationWriter = rotWriter;
+                        tween.rotationReader = new VMGChannelReader(m_Target, rotCompiled, VMGChannelType.Float);
+                        tween.rotationOffsetDeg = m_AutoRotateOffsetDeg;
+                    }
+                }
+            }
+
+            return tween;
         }
     }
 }

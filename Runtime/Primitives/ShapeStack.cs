@@ -60,10 +60,10 @@ namespace VMG.Core
         [Tooltip("How slots are aligned before the blend. Auto reorders each path so morphs between different shapes don't shrink at the midpoint; Preserve keeps node order so same-shape-different-rotation morphs visibly rotate. Keyframable (enum int).")]
         public BlendAlignment alignment;
 
-        public ShapeSlot m_Slot0;
-        public ShapeSlot m_Slot1;
-        public ShapeSlot m_Slot2;
-        public ShapeSlot m_Slot3;
+        public ShapeSlot Slot0;
+        public ShapeSlot Slot1;
+        public ShapeSlot Slot2;
+        public ShapeSlot Slot3;
 
         /// Default: slot 0 = circle at intensity 1, slots 1..3 empty.
         /// Matches the "single-shape renderer" behaviour authors expect
@@ -74,10 +74,10 @@ namespace VMG.Core
             {
                 resampleCount = 64,
                 alignment = BlendAlignment.Auto,
-                m_Slot0 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 1f },
-                m_Slot1 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
-                m_Slot2 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
-                m_Slot3 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
+                Slot0 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 1f },
+                Slot1 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
+                Slot2 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
+                Slot3 = new ShapeSlot { shape = PrimitiveShapeSource.Default(), intensity = 0f },
             };
         }
 
@@ -87,20 +87,20 @@ namespace VMG.Core
         public void Normalize()
         {
             if (resampleCount < 8) resampleCount = 64;
-            m_Slot0.shape.Normalize();
-            m_Slot1.shape.Normalize();
-            m_Slot2.shape.Normalize();
-            m_Slot3.shape.Normalize();
+            Slot0.shape.Normalize();
+            Slot1.shape.Normalize();
+            Slot2.shape.Normalize();
+            Slot3.shape.Normalize();
         }
 
         public ShapeSlot GetSlot(int i)
         {
             switch (i)
             {
-                case 0: return m_Slot0;
-                case 1: return m_Slot1;
-                case 2: return m_Slot2;
-                case 3: return m_Slot3;
+                case 0: return Slot0;
+                case 1: return Slot1;
+                case 2: return Slot2;
+                case 3: return Slot3;
                 default: return default;
             }
         }
@@ -109,10 +109,10 @@ namespace VMG.Core
         {
             switch (i)
             {
-                case 0: m_Slot0 = v; break;
-                case 1: m_Slot1 = v; break;
-                case 2: m_Slot2 = v; break;
-                case 3: m_Slot3 = v; break;
+                case 0: Slot0 = v; break;
+                case 1: Slot1 = v; break;
+                case 2: Slot2 = v; break;
+                case 3: Slot3 = v; break;
             }
         }
 
@@ -224,7 +224,7 @@ namespace VMG.Core
                 // renderer doesn't go blank. Useful default state when
                 // every intensity is zero.
                 s_paths[0].Clear();
-                m_Slot0.shape.Build(s_paths[0]);
+                Slot0.shape.Build(s_paths[0]);
                 outPath.closed = s_paths[0].closed;
                 for (int v = 0; v < s_paths[0].Count; v++) outPath.Add(s_paths[0].GetPoint(v));
                 return;

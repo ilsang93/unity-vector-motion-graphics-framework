@@ -123,7 +123,7 @@ namespace VMG.EditorTools
 
         private static string SlotName(int i)
         {
-            return "m_Slot" + i;
+            return "Slot" + i;
         }
 
         // Header "⋯" menu. Reset returns the stack to its default state

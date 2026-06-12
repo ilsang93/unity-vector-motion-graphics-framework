@@ -49,10 +49,10 @@ namespace VMG.EditorTools
             var renderer = go.GetComponent<VectorSpriteRenderer>();
             ref var stack = ref renderer.ShapeStack;
             var size = new Vector2(1f, 1f);
-            stack.m_Slot0.shape.size = size;
-            stack.m_Slot1.shape.size = size;
-            stack.m_Slot2.shape.size = size;
-            stack.m_Slot3.shape.size = size;
+            stack.Slot0.shape.size = size;
+            stack.Slot1.shape.size = size;
+            stack.Slot2.shape.size = size;
+            stack.Slot3.shape.size = size;
             renderer.Stroke.width = 0.04f;
 
             Undo.RegisterCreatedObjectUndo(go, "Create Vector Sprite Renderer");

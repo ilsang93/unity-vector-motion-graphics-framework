@@ -14,30 +14,21 @@ namespace VMG.UI
     public sealed class VectorImageGraphic : MaskableGraphic
     {
         [Tooltip("Optional SVG asset. When set, procedural shape/modifiers/style are bypassed. Object reference: NOT keyframable from AnimationClip — swap via script.")]
-        [SerializeField] private VMGShapeAsset m_SvgAsset;
-        [SerializeField] private ShapeStack m_ShapeStack = ShapeStack.Default();
-        [SerializeField] private StrokeStyle m_Stroke = StrokeStyle.Default;
-        [SerializeField] private FillStyle m_Fill = new FillStyle { enabled = true, color = Color.white };
-        [SerializeField] private RoundCornerModifier m_RoundCorners = RoundCornerModifier.Default();
-        [SerializeField] private TrimPathModifier m_Trim = TrimPathModifier.Default();
-        [Tooltip("Stretch the shape to fill the RectTransform. Keyframable.")]
-        [SerializeField] private bool m_FitToRect = true;
+        public VMGShapeAsset SvgAsset;
+        public ShapeStack ShapeStack = ShapeStack.Default();
+        public StrokeStyle Stroke = StrokeStyle.Default;
+        public FillStyle Fill = new FillStyle { enabled = true, color = Color.white };
+        public RoundCornerModifier RoundCorners = RoundCornerModifier.Default();
+        public TrimPathModifier Trim = TrimPathModifier.Default();
+        [Tooltip("Stretch the shape to fill the RectTransform. When true, ShapeStack slot center/size channels are overwritten every frame from the RectTransform — animate RectTransform.sizeDelta instead. Keyframable.")]
+        public bool FitToRect = true;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Object reference: NOT keyframable from AnimationClip — swap via script.")]
-        [SerializeField] private Texture m_Texture;
+        public Texture Texture;
 
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
 
-        public VMGShapeAsset SvgAsset { get => m_SvgAsset; set { m_SvgAsset = value; SetVerticesDirty(); } }
-        public ref ShapeStack ShapeStack => ref m_ShapeStack;
-        public ref StrokeStyle Stroke => ref m_Stroke;
-        public ref FillStyle Fill => ref m_Fill;
-        public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
-        public ref TrimPathModifier TrimModifier => ref m_Trim;
-        public bool FitToRect { get => m_FitToRect; set { m_FitToRect = value; SetVerticesDirty(); } }
-        public Texture Texture { get => m_Texture; set { m_Texture = value; SetMaterialDirty(); } }
-
-        public override Texture mainTexture => m_Texture != null ? m_Texture : base.mainTexture;
+        public override Texture mainTexture => Texture != null ? Texture : base.mainTexture;
 
         protected override void OnEnable()
         {
@@ -56,7 +47,7 @@ namespace VMG.UI
         protected override void OnRectTransformDimensionsChange()
         {
             base.OnRectTransformDimensionsChange();
-            if (m_FitToRect) SetVerticesDirty();
+            if (FitToRect) SetVerticesDirty();
         }
 
         /// Animator/Timeline-driven [SerializeField] writes don't go through
@@ -72,22 +63,22 @@ namespace VMG.UI
         {
             vh.Clear();
 
-            if (m_SvgAsset != null)
+            if (SvgAsset != null)
             {
                 PopulateFromSvg(vh);
                 return;
             }
 
-            if (m_FitToRect)
+            if (FitToRect)
             {
                 // Fit applies to every slot so the blend stays in sync
                 // with the RectTransform — different per-slot sizes
                 // would break the index-by-index lerp visually.
                 Rect r = rectTransform.rect;
-                m_ShapeStack.m_Slot0.shape.center = r.center; m_ShapeStack.m_Slot0.shape.size = r.size;
-                m_ShapeStack.m_Slot1.shape.center = r.center; m_ShapeStack.m_Slot1.shape.size = r.size;
-                m_ShapeStack.m_Slot2.shape.center = r.center; m_ShapeStack.m_Slot2.shape.size = r.size;
-                m_ShapeStack.m_Slot3.shape.center = r.center; m_ShapeStack.m_Slot3.shape.size = r.size;
+                ShapeStack.Slot0.shape.center = r.center; ShapeStack.Slot0.shape.size = r.size;
+                ShapeStack.Slot1.shape.center = r.center; ShapeStack.Slot1.shape.size = r.size;
+                ShapeStack.Slot2.shape.center = r.center; ShapeStack.Slot2.shape.size = r.size;
+                ShapeStack.Slot3.shape.center = r.center; ShapeStack.Slot3.shape.size = r.size;
             }
 
             // Pipeline: ShapeStack -> RoundCorner -> Trim. Fill skips
@@ -99,11 +90,11 @@ namespace VMG.UI
             // Fill pipeline.
             m_Pipeline.workingPath.Clear();
             m_Pipeline.mesh.Clear();
-            m_ShapeStack.Build(m_Pipeline.workingPath);
-            if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
-            if (m_Fill.enabled)
+            ShapeStack.Build(m_Pipeline.workingPath);
+            if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Fill.enabled)
             {
-                var fill = m_Fill;
+                var fill = Fill;
                 fill.color *= color; // respect Graphic.color tint
                 FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Pipeline.mesh);
             }
@@ -111,19 +102,19 @@ namespace VMG.UI
             // Stroke pipeline: full modifier chain including trim.
             m_StrokeBuf.Clear();
             m_Pipeline.workingPath.Clear();
-            m_ShapeStack.Build(m_Pipeline.workingPath);
-            if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
-            if (m_Trim.Enabled) m_Trim.Apply(m_Pipeline.workingPath);
-            if (m_Stroke.enabled)
+            ShapeStack.Build(m_Pipeline.workingPath);
+            if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
+            if (Stroke.enabled)
             {
-                var stroke = m_Stroke;
+                var stroke = Stroke;
                 stroke.color *= color;
                 StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
             // Normalize UVs across the union of fill + stroke so a texture
             // lays continuously over the whole renderer.
-            Rect uvRect = m_FitToRect ? rectTransform.rect : VertexUnionBounds(m_Pipeline.mesh, m_StrokeBuf);
+            Rect uvRect = FitToRect ? rectTransform.rect : VertexUnionBounds(m_Pipeline.mesh, m_StrokeBuf);
             m_Pipeline.mesh.NormalizeUVsToRect(uvRect);
             m_StrokeBuf.NormalizeUVsToRect(uvRect);
 
@@ -157,14 +148,14 @@ namespace VMG.UI
         private readonly VectorPath m_SvgPath = new VectorPath();
         private void PopulateFromSvg(VertexHelper vh)
         {
-            var asset = m_SvgAsset;
+            var asset = SvgAsset;
             Rect r = rectTransform.rect;
             // Uniform fit-to-rect with center origin. SVG viewBox starts at (0,0)
             // top-left; ScriptedImporter already flipped Y so (0,0) is now
             // bottom-left in SVG coords. Map [0,viewBoxSize] -> rect.
             float sx = asset.viewBoxSize.x > 0f ? r.width / asset.viewBoxSize.x : 1f;
             float sy = asset.viewBoxSize.y > 0f ? r.height / asset.viewBoxSize.y : 1f;
-            float scale = m_FitToRect ? Mathf.Min(sx, sy) : 1f;
+            float scale = FitToRect ? Mathf.Min(sx, sy) : 1f;
             Vector2 fitSize = new Vector2(asset.viewBoxSize.x * scale, asset.viewBoxSize.y * scale);
             Vector2 origin = r.center - fitSize * 0.5f;
 
@@ -178,8 +169,8 @@ namespace VMG.UI
 
                 // Bezier-tessellate + apply uniform fit transform.
                 BezierTessellator.Tessellate(sub.nodes, sub.closed,
-                    Mathf.Max(4, m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment > 0
-                                 ? m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment : 16),
+                    Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
+                                 ? ShapeStack.Slot0.shape.bezierSamplesPerSegment : 16),
                     m_SvgPath);
                 for (int i = 0; i < m_SvgPath.nodes.Count; i++)
                 {

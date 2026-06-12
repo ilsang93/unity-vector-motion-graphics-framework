@@ -1,5 +1,679 @@
 # Changelog
 
+## [0.26.0] - 2026-06-13
+
+CSS importer end-to-end integration round. The 0.25.0 translator now
+has working editor entry points, a `.vmgfx` ScriptedImporter so the
+output drops into `VMGAnimator.script` directly, and the script slot
+plus auto-play / loop knobs that were missing from the animator
+inspector.
+
+### Added
+
+- **`VmgFxScriptedImporter`.** `.vmgfx` files import as TextAsset and
+  are droppable into `VMGAnimator.script`. Importer stays dumb —
+  compilation still happens at `VMGAnimator.OnEnable` via
+  `VMGFxScript.Compile`, so the runtime compiler remains the single
+  source of grammar truth.
+- **Editor menu entry points for the CSS importer.**
+  - `Tools ▸ VMG ▸ Import CSS @keyframes…` — file dialog, writes
+    `.vmgfx` next to the source.
+  - `Tools ▸ VMG ▸ CSS → VMGFx Window` — paste-in window with
+    Translate / Save / Copy / Clear and inline warnings.
+- **`VMGAnimator.playOnEnable`** (bool, default false). At runtime
+  OnEnable, if set + Internal mode, calls `Play()`. No effect in Edit
+  mode or External play mode. Inspector control in the Playback
+  section.
+- **`VMGAnimator.loopScript`** (bool, default false). Wraps progress
+  1→0 in Internal + script mode. Mirrors `VMGAnimationClip.loop` for
+  clip mode. The animator drives a script via normalized progress and
+  stops at 1, so a `loop` keyword inside a `.vmgfx` timeline was
+  effectively inert for the playhead; `loopScript` is the working
+  knob.
+- **CSS importer: `var(--name, fallback)` resolution.** Transform
+  function arguments now resolve a `var()` with a fallback to the
+  fallback value before parsing — `scale(var(--s, 1.1))` becomes
+  `scale(1.1)`. A fallback-less `var()` is left raw so the downstream
+  parser warns honestly rather than silently dropping the function.
+
+### Fixed
+
+- **`VMGAnimator` Inspector did not expose the `script` field.** The
+  field had existed since round-6 script-mode but the CustomEditor
+  only drew Clip / Playback / Status / Timeline sections. Inspector
+  now draws a Script section above Clip; the Clip section disables
+  (read-only) when a script is assigned, matching the runtime
+  priority.
+
+### Scope decision documented
+
+- **CSS importer is for self-contained `@keyframes`** from AE / Figma /
+  Webflow-style exports. HTML companion input is permanently out of
+  scope — building a mini-browser (cascade, selector engine,
+  per-element scoped vars) is not the importer's purpose. Wild CodePen
+  demos with HTML-tree-dependent selectors or per-element CSS-variable
+  stagger should be trimmed to their `@keyframes` core; element-level
+  effects re-expressed via `VMGFx.Stagger` and timeline states.
+  `:root` global-token resolution is a possible future addition;
+  per-element scoped vars are not.
+
+### Known behaviour (not a bug)
+
+- **Stroke does not scale with `transform.scale`.** Animating a vector
+  shape's `localScale` to (0,0,1) shrinks the fill mesh to a point but
+  leaves the stroke outline at its built-in width — stroke thickness
+  is baked into the mesh, not a render-time multiplier. Workaround:
+  turn the stroke off on shapes intended to scale to zero, or animate
+  `Stroke.width` alongside scale.
+
+## [0.25.0] - 2026-06-13
+
+CSS `@keyframes` importer — translate browser-CSS keyframe animations
+into `.vmgfx` script text the existing `VMGAnimator` / `VMGFxScript`
+pipeline runs unchanged. Single-direction (CSS → VMG); the existing
+internal-JSON round-trip remains the export path. The original AE
+handoff motivation for an Authored-JSON track was superseded — AE and
+CSS shape-keyframe animation are functionally equivalent at the
+shape/keyframe level, so the CSS surface covers both.
+
+### Added
+
+- **`VMG.Animation.Serialization.VMGCssKeyframes.Translate(string css,
+  out List<string> warnings)`** — parses a `@keyframes`/selector pair
+  and returns `.vmgfx` text. The caller can paste the output into a
+  `.txt` TextAsset on a `VMGAnimator`, save it as a `.vmgfx` for
+  source control, or feed it back through `VMGFxScript.Compile`
+  directly. Tokenizer + parser + emitter live in a single file.
+
+### Supported CSS surface
+
+- `@keyframes name { 0% / 50% / from / to / 100% { ... } }` with
+  comma-separated frame selectors.
+- `<selector> { animation: name dur timing delay iter direction; }`
+  shorthand AND `animation-*` longhands. `,`-separated `animation`
+  lists are honoured.
+- Selectors: `.class` / `#id` / bare ident — all map to a GameObject
+  of the same name under the VMGAnimator root. Compound selectors
+  (`.a .b`, `div.box`) are warned + skipped.
+- `transform`: `translate(x, y)` / `translateX/Y` / `scale(s)` /
+  `scale(x, y)` / `scaleX/Y` / `rotate(Ndeg)` / `rotateZ`. Combinable
+  pieces; aggregated into `localPosition` / `localScale` /
+  `localEulerAngles.z` per-frame.
+- `opacity` → `color.a` (Graphic tint alpha).
+- `background-color` → `Fill.color`, `border-color` →
+  `Stroke.color`, `border-width` → `Stroke.width`. `color` → tint.
+- Colour literals: `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa` / `rgb()` /
+  `rgba()` / named CSS colours. HSL is warned (unsupported).
+- Timing functions: `linear` / `ease` / `ease-in` / `ease-out` /
+  `ease-in-out` / `step-start` / `step-end` / `cubic-bezier(a,b,c,d)` /
+  `steps(N)`. CSS keywords map to the W3C-spec cubic-Bezier control
+  points so visual fidelity matches a browser exactly. Per-keyframe
+  `animation-timing-function` is honoured (CSS attaches it to the
+  starting keyframe of a segment; the importer shifts to the
+  end-of-segment convention VMGFx uses).
+- Units: `px` / `deg` / `s` / `ms`. `rem`/`em` get a coarse 16-px
+  conversion. `rad`/`turn`/`grad` for angles.
+- `animation-direction`: `alternate` and `alternate-reverse` honoured;
+  `reverse` warned (no native reverse-from-100% playback yet).
+
+### Notes
+
+- Per-channel keyframe blocks. Each animated property is emitted as
+  its own `keyframes target { ... }` block so a per-keyframe timing
+  function on one channel does not bleed across channels — channels
+  redefined at different keyframes stay independent, matching CSS.
+- One CSS frame can carry multiple declarations; the emitter splits
+  by channel. The block-level `animation` shorthand fields
+  (duration / delay / iter / direction / default timing) replicate
+  identically on every per-channel block.
+- Unsupported: HSL colour, CSS variables, `calc()`, `:hover`/`:active`,
+  `transition`, `filter`, `transform-origin`, layout properties
+  (`display`/`margin`/`padding`/`flex`/`grid`/`width`/`height`/…),
+  fill-mode, play-state, 3D rotate (`rotateX`/`rotateY`), `matrix()`,
+  `skew()`, `perspective()`. Most layout/typography properties are on
+  a known-but-dropped allowlist (silently dropped without warnings);
+  unknown identifiers produce a warning so typos surface.
+- `Translate` returns the warning list out-param. The internal
+  JSON serializer (`VMGAnimationClipSerializer`) is untouched —
+  round-trip backup remains available.
+
+## [0.24.0] - 2026-06-13
+
+Code-API usability round B — single-tween handle parity with anime.js.
+A bare `VMGFx.Animate(target).To(...).Duration(...)` now returns a
+fully-featured handle: `Revert()` and the new `Cancel()` complete the
+set already exposed for `Play / Pause / Stop / Seek / Restart / Reset
+/ Complete / Reverse / Refresh / PlaybackRate / Completion`. No more
+wrapping a single animate in a Timeline just to get a revertable
+handle. Closes finding #1.
+
+`Cancel()` is the new "abort current tween, keep current channel
+value, start fresh from here" verb. Unlike `Revert()` (which snaps
+channels back to their pre-animation baseline) and `Pause()` (which
+leaves the handle resumable with the original from→to), `Cancel()`
+ends the tween at its current value and clears tween flags so a
+follow-up `.Animate(...)` recaptures from-side from where things
+stopped. Use for toggle / re-press patterns where the old handle is
+being discarded — `Revert` flashes the baseline during fast re-press,
+`Pause` strands the old handle. Closes finding #3.
+
+### Added
+
+- **`VMGAnimate.Revert()` / `.Cancel()`.** Single-animate handle now
+  exposes both stop-verbs. Mirrors the existing Timeline surface.
+- **`VMGTimeline.Cancel()`.** Recurses into children in the same
+  reverse-order pattern as `Revert`, but skips the baseline writes.
+- **`VMGAnimation.Cancel()`.** Underlying engine method —
+  `EndAndClear(restoreBaseline: false)`. `Revert()` is now the
+  `restoreBaseline: true` counterpart over the same helper.
+
+### Notes
+
+- No API removals. `Stop()` semantics (Seek-to-start + pause) are
+  unchanged — `Restart()` / `Reset()` still depend on it. `VMGAnimator`
+  clip-mode is unaffected.
+- DSL surface unchanged. The DSL runs through `VMGAnimator` which
+  doesn't expose code-handles; the new verbs are for direct
+  `VMGFx.Animate` / `VMGFx.Timeline` callers.
+- No schema changes; no migration. Bump per the round's user-visible
+  API addition.
+
+## [0.23.0] - 2026-06-13
+
+Code-API usability round A — schema break. Strips the `m_` SerializeField
+prefix from every keyframable surface on `VectorImageGraphic` /
+`VectorSpriteRenderer` / `ShapeStack` / `PrimitiveShapeSource`, removes the
+redundant ref-returning property layer, and replaces the single-float
+`cornerRadius` with a `Vector2 cornerRadii` so elliptical corners (CSS
+`border-radius: Xpx / Ypx`) are reachable directly. AE-toggle-style
+authoring code now reads as `.To("Fill.color", ...)` instead of
+`.To("m_Fill.color", ...)`.
+
+### BREAKING — channel paths and field names
+
+- **SerializeField rename pass.** Every previously `m_*`-prefixed
+  serialized field on the public surface drops the prefix and becomes a
+  `public` field (Unity still serializes it). The same name is used
+  everywhere — inspector label, channel path, and direct C# field access.
+  AnimationClips, JSON clips, and code that referenced the old names
+  break.
+
+  | Renamer  | Before                       | After                     |
+  | -------- | ---------------------------- | ------------------------- |
+  | UGUI     | `m_Fill`, `m_Stroke`, `m_ShapeStack`, `m_RoundCorners`, `m_Trim`, `m_FitToRect`, `m_SvgAsset`, `m_Texture` | `Fill`, `Stroke`, `ShapeStack`, `RoundCorners`, `Trim`, `FitToRect`, `SvgAsset`, `Texture` |
+  | World    | `m_Tint`, `m_Depth`, `m_Material`, `m_SortingLayerID`, `m_SortingOrder`, `m_SvgUnitsPerWorldUnit` (+ the UGUI set above) | `Tint`, `Depth`, `Material`, `SortingLayerID`, `SortingOrder`, `SvgUnitsPerWorldUnit` |
+  | Stack    | `m_Slot0..m_Slot3`           | `Slot0..Slot3`            |
+  | FreePath | `m_Node00..m_Node63`         | `Node00..Node63`          |
+
+  No migration shim. Pre-1.0 per the package's stated migration policy
+  — re-bind any clip that referenced the old paths, search-and-replace
+  any C# / `.vmgfx` source for the new field names.
+
+- **`ref`-returning properties removed.** `VectorImageGraphic.Fill`,
+  `.Stroke`, `.ShapeStack`, `.RoundCornerModifier`, `.TrimModifier`,
+  `.SvgAsset`, `.FitToRect`, `.Texture` (and the world-renderer
+  equivalents) used to be `ref`-getters in front of the private
+  SerializeField. They are now the field directly — `g.Trim.end = 0.5f`
+  is unchanged at the call site but lands on the public field. Two
+  property name changes for consistency: `RoundCornerModifier` →
+  `RoundCorners`, `TrimModifier` → `Trim`. Setter side-effects
+  (`SetVerticesDirty` / `Rebuild` / `ApplyTexture` / `ApplySorting`) are
+  removed; the runtime path already runs them every frame in
+  `LateUpdate` / `Update`, so external writes pick up on the next frame
+  with no visible delay.
+
+- **`cornerRadius : float` → `cornerRadii : Vector2`.** Per-axis radii
+  let RoundedRectangle reproduce CSS `border-radius: Xpx / Ypx`
+  elliptical corners. `BuildRoundedRect` now sweeps elliptical arcs
+  (`AddEllipticalArc`) using `(rx, ry)`; the degenerate full-ellipse
+  fallback now fires only when **both** radii reach the half-extent.
+  Tween extensions: `DOCornerRadius(float)` is kept as a convenience
+  (expands to `(r, r)`); `DOCornerRadii(Vector2)` is new. DSL: new
+  `cornerRadii=X,Y` attribute on `add ... roundedRect`; the existing
+  single-value `cornerRadius=` / `corner=` keys still work and expand
+  to `(r, r)`.
+
+### Added
+
+- **`FitToRect` tooltip warns about silent slot-size overwrite.** New
+  text on the field: "When true, ShapeStack slot center/size channels
+  are overwritten every frame from the RectTransform — animate
+  RectTransform.sizeDelta instead." Catches the footgun where users
+  reach for `ShapeStack.Slot0.shape.size` first and find it has no
+  visible effect. (Findings doc #5.)
+
+### Compatibility
+
+- AnimationClip `.asset` files and any exported VMG JSON clips
+  referencing the old `m_*` paths will fail to bind. Re-bind manually.
+- DSL scripts (`.txt` / TextAsset / inline strings) with literal
+  `m_Fill.color` etc. need a one-time search-and-replace to the new
+  names.
+- C# code using `g.TrimModifier.X` or `g.RoundCornerModifier.X` needs to
+  switch to `g.Trim.X` / `g.RoundCorners.X` (the field replaces the
+  property; both `enabled` and the inner fields are reachable the same
+  way).
+
+## [0.22.0] - 2026-06-13
+
+DSL parity round 2 — Stagger. Closes the group-3 "big four" for the
+script-mode DSL: the code-API `tl.Stagger(targets, build, step, from,
+seed)` now has a block statement counterpart. Anime.js parity for
+"repeat N children with index variation" authoring inside `.vmgfx` /
+TextAsset scripts.
+
+### Added
+
+- **`stagger` block statement.** Repeats its body once per direct child
+  of a named group, distributing the children across time via
+  `VMGTimeline.Stagger`. Legal both at top level (wraps itself in an
+  implicit timeline) and inside a `timeline { ... }` block.
+
+  ```
+  stagger dots/* step=0.1 from=center seed=42 {
+      animate it m_Fill.color -> red duration=0.5 ease=outQuad
+      animate it.transform localScale.x -> random(0.6, 1.6, i)
+          duration=0.4 ease=outBack
+  }
+  ```
+
+- **Wildcard target `<group>/*`.** Resolves the named group via
+  `root.Find(...)` (so nested `a/b/*` paths work) and collects each
+  direct child's renderer Component (`VectorImageGraphic` /
+  `VectorSpriteRenderer`), falling back to the Transform when the
+  child has no renderer. Scene order is preserved.
+
+- **Implicit `it` / `i` / `n` bindings inside a stagger block.**
+  - `it` at the target position substitutes the current child
+    component; `it.transform` substitutes its Transform.
+  - `i` (current index, 0..n-1) and `n` (total count) at value
+    positions substitute the numeric literal. Word-boundary aware,
+    so `inOutQuad` / `linear` are not mangled.
+  - Outside a stagger block, `it` / `i` / `n` remain ordinary
+    identifiers (forward-compatible).
+
+- **Stagger header attributes.** `step` (float, seconds — default
+  0.1), `from` (`first` / `center` / `last` / `random` — maps to
+  `VMGStaggerFrom`), `seed` (int — drives `from=random` ordering
+  only), `at` (timeline position string — only meaningful inside an
+  enclosing `timeline { ... }`).
+
+- **Tokenizer `*` allowed in identifier body.** Required for the
+  `dots/*` wildcard to tokenise as a single ident. `*` remains
+  illegal at start, so existing punctuation behaviour is unchanged.
+
+### Notes
+
+- Only `animate` and `motionPath` statements are allowed inside the
+  stagger body. `set` / `call` / `label` are not (per-child semantics
+  are ambiguous).
+- `seed` on the stagger header controls only `from=random` shuffle
+  ordering. Per-child variation inside `random()` / `rangeInt()`
+  generators is the body's responsibility — pass `i` (or `seed+i`,
+  built lazily by the body) for varying per-child seeds.
+- Multiple animate/motionPath statements in a single stagger block
+  currently keep only the last one's tween (a warning is logged).
+  Wrap each repeated tween in its own stagger block for now.
+
+## [0.21.0] - 2026-06-13
+
+DSL parity round 2 — FunctionValue. Third of the group-3 "big four"
+closes: the script-mode DSL now accepts lazy generators at value
+positions, mirroring the code-API `VMGAnimate.To(Func<T>) /
+FromTo(Func<T>, Func<T>)` + `RefreshOnLoop` surface. Anime.js parity
+for `random()` / `randomInt()` value expressions.
+
+### Added
+
+- **`random(min, max [, seed])` generator at value position.**
+  Returns a continuous float in `[min, max]`. Recognised by the parser
+  anywhere a numeric value is expected (`-> random(...)`,
+  `from=random(...)`, `keyframes` `path=random(...)`). On Int channels
+  the result is rounded to the nearest integer for convenience.
+
+  ```
+  animate dot.transform localPosition.x -> random(-200, 200)
+    duration=1 ease=inOutQuad loop alternate refreshOnLoop
+  ```
+
+- **`rangeInt(min, max [, seed])` generator at value position.**
+  Returns an integer in `[min, max]` inclusive on both ends (anime.js
+  convention). Usable on Float channels too (returned as a float).
+
+- **Optional `seed` argument (int) on both generators.** When supplied,
+  a `System.Random(seed)` is captured per generator instance so the
+  sequence is deterministic across runs — same seed produces the same
+  values. Omitting the seed falls back to `UnityEngine.Random`
+  (global, non-deterministic), matching anime.js's default behaviour.
+
+- **`refreshOnLoop` animate attribute.** Re-evaluates every Func<T>
+  tween value at each iteration boundary, so a `random(...)` value
+  draws a fresh number every loop instead of freezing on its first
+  roll. Bare `refreshOnLoop` (no value) means on; `=true/false`
+  controls explicitly. Maps 1:1 onto
+  `VMGAnimate.RefreshOnLoop(bool)`. Default is off (anime.js parity).
+
+- **Tokenizer paren-aware whitespace.** Whitespace inside balanced
+  `(...)` in a value position is now preserved/dropped without
+  terminating the value. This means
+  `random(-100, 100, 42)` and `cubicBezier(0.25, 0.1, 0.25, 1)` parse
+  with reader-friendly spacing — previously you had to write them
+  compact (`random(-100,100,42)`). Compact form still works
+  unchanged. Newlines still terminate the value (no multi-line
+  generator calls).
+
+### Fixed
+
+- **Bare-key flag attributes now parse.** `animate ... loop alternate`
+  (and friends — `refreshOnLoop`, `autoRotate`, `closed`, `fitToRect`,
+  `reversed`, `paused`) previously raised `expected '=' after
+  attribute key 'loop'` despite the doc-comments and CHANGELOG
+  examples showing the bare form. `ParseAttributes` now treats a key
+  with no trailing `=` as an empty-valued flag, and the affected
+  handlers go through a `ParseFlag` helper that maps empty → on,
+  preserving `=true/false` overrides.
+
+### Notes
+
+- **Numeric channels only this round.** Float and Int leaf types use
+  the new generators. Vector2/3/4 channels would need a tuple-shaped
+  generator (`vec2(random(-1,1), random(-1,1))`) which expands the
+  grammar — deferred to a later round if asked. Color channels likewise
+  would need a `randomColor()` / per-channel form.
+- **Seeded RNG is per generator instance**, not per script. Each
+  `random(..., 42)` in the DSL creates its own `System.Random(42)`. If
+  two channels share the same seed they advance independently.
+  Sequential calls inside one generator (loop / refreshOnLoop) walk the
+  same series.
+- `VMGAnimator` unchanged — round rule preserved.
+- Round 1 and round 2 (Spring + MotionPath) syntax 100% compatible.
+  `random` / `rangeInt` / `refreshOnLoop` were previously unparseable;
+  this is a strict superset.
+
+## [0.20.0] - 2026-06-13
+
+DSL parity round 2 — MotionPath. Second of the group-3 "big four"
+closes: a new `motionPath` statement drives a target's
+`transform.position` along an inline polyline, with optional
+auto-rotation tangent tracking. Mirrors the code-API
+`VMGAnimate.AlongPath(points, closed) + .AutoRotate(offsetDeg)` pair.
+
+### Added
+
+- **`motionPath <target> points=x1,y1,x2,y2,... [closed=true]
+  [autoRotate[=offsetDeg]] [duration= ease= delay= endDelay= loop=
+  alternate at=]` statement.** Top-level or inside a timeline.
+  Reuses the existing comma-pair `points=` format from `add … path`,
+  so AE-exported coordinates can be pasted between shape descriptors
+  and motion paths without massaging.
+
+  ```
+  scene {
+    add dot circle size=20 fill=#fff
+  }
+  timeline duration=2 {
+    motionPath dot points=0,0,100,50,200,0 autoRotate=-90
+  }
+  ```
+
+- **`autoRotate` accepts `true` / `false` / a numeric offset in
+  degrees.** Bare `autoRotate` (no value) means "on, offset 0", same
+  short form as the existing `loop` / `alternate` attrs. Anime.js
+  parity: `createMotionPath({autoRotate: -90})`.
+
+### Notes
+
+- **Inline `points=` only this round.** Asset-mode binding
+  (`asset=heart subShape=0` referencing a `VMGShapeAsset`) is
+  deferred to a future round that defines DSL-wide asset
+  registration. The code-API `.AlongPath(VMGShapeAsset, int)` is
+  unchanged and still usable from C#.
+- **Why a new statement instead of `animate dot transform.position
+  -> 0,0 alongPath=...`?** `animate` grammar requires `<target>
+  <fieldPath> -> <toValue>`; the `to` value has no meaning when a
+  motion path is driving position. A dedicated `motionPath`
+  statement keeps both grammars clean.
+- `VMGAnimator` unchanged — round rule preserved.
+- Round 1 syntax 100% compatible; `motionPath` is a new top-level
+  keyword that previously errored as unknown, so this is a strict
+  superset.
+
+## [0.19.0] - 2026-06-13
+
+DSL parity round 2 — Spring. First of the group-3 "big four" closes:
+function-form `spring(...)` is now a recognised ease in the script-mode
+DSL, matching `VMGEase.Spring` on the code API one-to-one.
+
+### Added
+
+- **`ease=spring(stiffness, damping, mass, velocity)` in DSL.** Slots
+  into the existing `ResolveEase` function-form switch alongside
+  `cubicBezier(...)` and `steps(N)`. Argument order matches the C# API
+  (`VMGEase.Spring(stiffness=100, damping=10, mass=1, velocity=0)`) so
+  DSL ↔ code translation is mechanical. 0..4 positional args, missing
+  trailing args take the C# default — `spring(200)` is a stiffer
+  spring with otherwise-default damping/mass/velocity.
+
+  ```
+  timeline duration=1 {
+    animate dot scale -> 1.5 ease=spring(200, 12)
+    animate dot opacity -> 1 ease=spring
+  }
+  ```
+
+  Bare `spring` (no parens) continues to work via `VMGEase.From` and
+  produces the all-defaults spring — unchanged from prior rounds.
+
+### Notes
+
+- Unparseable args fail the whole resolve to `Linear` with a warning,
+  same pattern as `cubicBezier`. Whitespace inside parens
+  (`spring( )`) collapses to the 0-arg form.
+- `VMGAnimator` unchanged — round rule preserved.
+- Round 1 syntax 100% compatible: function-form `spring(...)` was
+  previously a `Linear` fallback, so this is a strict superset.
+
+## [0.18.0] - 2026-06-13
+
+DSL parity round 1 + CSS-compatible keyframes. The script-mode `.txt`
+DSL has been frozen since round 6 while the code-API grew. This release
+brings the most useful bits of that gap back to script authors, and
+adds a native CSS-style `keyframes` block so AE-exported / CSS-authored
+animation data can be hand-written or machine-converted with almost no
+syntactic massaging.
+
+### Added
+
+- **Timeline header attrs.** `timeline duration=2 ease=outQuad
+  playbackEase=inOutQuad rate=1.5 loop=3 alternate { ... }`. Maps to
+  `VMGTimeline.Duration / Defaults(ease) / PlaybackEase / PlaybackRate /
+  Loop / Alternate` 1:1. Replaces the previous timeline header which
+  only allowed the bare `timeline { ... }` form.
+
+- **`on <event> -> <eventName>` statement** inside a timeline.
+  Subscribes the given script event name to a timeline lifecycle
+  callback. Events: `begin / beforeUpdate / update / render / loop /
+  complete / pause`. Dispatched through the same channel as `call`, so
+  `VMGAnimator.scriptEvent` listeners hear both.
+
+  ```
+  timeline duration=2 {
+    animate dot opacity -> 1 duration=1
+    on complete -> doneAnimating
+  }
+  ```
+
+- **`keyframes <target> { <pct>%: ... }` block.** CSS-style multi-
+  keyframe animation in DSL. Compiles into a series of segment tweens
+  added to the enclosing timeline (or an auto-wrapped one-off timeline
+  if used at top level). Per-frame `ease=` override is supported,
+  applying to the segment ending at that frame (CSS semantics). Accepts
+  `from` / `to` aliases for `0%` / `100%`.
+
+  ```
+  keyframes box {
+    0%:   pos=0,0    opacity=0
+    50%:  pos=50,0   opacity=1   ease=inOutQuad
+    100%: pos=100,0  opacity=0
+  } duration=2 ease=outQuad loop=2 alternate
+  ```
+
+  Channels not redefined at an intermediate frame hold their last
+  defined value (CSS semantics: no segment, no write).
+
+- **Function-form ease in DSL.** `ease=cubicBezier(0.25,0.1,0.25,1)`
+  for CSS-compatible curve specification, and `ease=steps(N)` (mapped to
+  `Hold` for now — staircase ease is engine-level work). Applies
+  everywhere DSL accepts an ease: `animate`, `timeline`, `keyframes`
+  block, per-frame override.
+
+- **`VMGTimeline.Defaults(VMGEase ease, ...)` overload.** Lets a
+  constructed `VMGEase` (not just a preset enum) become the child
+  default. Used by the DSL header to route any of preset name /
+  cubicBezier / steps / spring uniformly into `Defaults(ease:)`.
+
+### Notes
+
+- **Combined position selectors already worked.** `at=*=2`, `at=<+=0.2`,
+  `at=<<+=0.2`, `at=label+=0.5` all parse correctly through the
+  existing value-mode tokenizer + `VMGAt.Parse`. No changes required;
+  the DSL was carrying these for free already.
+
+- **CSS/AE handoff.** The `keyframes` block is the explicit
+  conversion-friendly surface for AE-exported keyframe data and
+  CSS-authored `@keyframes`. Direct hand-conversion is mostly one-to-one
+  except for:
+  - CSS percent units → VMG accepts bare `<pct>%` or `from`/`to`.
+  - CSS unit suffixes (`px`, `deg`) → strip; VMG values are raw numbers.
+  - CSS `transform: translateX(N)` → split into per-channel
+    `transform.position`, `transform.rotation`, etc.
+
+- **Tokenizer additions.** `%` and `:` are now single-character symbol
+  tokens (previously dropped with a warning). They appear nowhere in
+  pre-0.18 DSL syntax, so no existing scripts are affected.
+
+- **`steps(N)` is a stub.** Currently collapses to `Hold` regardless of
+  `N`. A future round will extend `VMGEase` with a native staircase
+  kind. The argument is accepted for forward compatibility — scripts
+  written today will keep working when the real implementation lands.
+
+- **VMGAnimator unchanged.** The clip-mode runtime path is untouched.
+  Script-mode benefits from every new feature automatically because
+  the DSL compiles down to the same `VMGFx.Animate` / `VMGFx.Timeline`
+  call sites the code API uses.
+
+## [0.17.0] - 2026-06-13
+
+anime.js port group 2 #5: **Revert** — undo every channel an animation
+or timeline has written to and restore the pre-animation values. Closes
+the anime.js port at the code-API level. DSL parity round is the
+natural next session (the script-mode surface has been frozen since
+round 6 and now lags behind 12 code-API features across groups 1–3).
+
+### Added
+
+- **`VMGAnimation.Revert()`.** Snap-back (not animated) every channel
+  the animation has written to since play started, then stop and reset
+  the playhead. Distinct from `Reverse()` (which flips direction and
+  keeps playing).
+
+  ```csharp
+  var anim = VMGFx.Animate(target).To("transform.position", new Vector3(5, 0, 0)).Duration(2f);
+  // ... user clicks Cancel mid-animation ...
+  anim.Revert(); // target.position is back to its pre-play value
+  ```
+
+- **`VMGTimeline.Revert()`.** Same semantics across every child in
+  reverse order, so the channels reached the state they had before the
+  *first* writer fired — even when later children overwrote earlier
+  ones.
+
+### Notes
+
+- **Baseline is per-channel, captured lazily.** The first time each
+  tween writes to a channel, the reader-side value is snapshotted into
+  a per-animation dict keyed by `(target instance ID, field path)`.
+  Subsequent tweens hitting the same channel don't re-capture
+  (per-channel single-slot rule), so the stored value is always "before
+  THIS animation began."
+- **FunctionValue interaction.** `Refresh()` clears `hasFrom` so the
+  next Evaluate re-resolves the lazy from-side, but the revert baseline
+  is captured through the reader and stored in a slot
+  `Refresh()` doesn't touch. A `Refresh()` mid-play doesn't move the
+  Revert origin.
+- **MotionPath interaction.** The position channel and the optional
+  AutoRotate channel are each captured as full Vector3/Vector2 + float
+  baselines. Separate from the runtime Z-preservation baseline
+  `VMGMotionPathTween` already keeps for sampling.
+- **Revert→Restart cycle.** After Revert, the next play cycle
+  re-captures both `from` and the revert baseline from the (now
+  restored) target state, so repeated Revert+Restart cycles behave
+  intuitively.
+- **Clip-driven tweens are not subject to Revert.** Clip data IS the
+  authored baseline; the host GameObject's pre-Play state is recovered
+  by stopping the animator, which the engine already supports.
+
+### Changed
+
+- `VMGChannelWriter` now takes an optional `fieldPath` string in its
+  constructor and exposes `TargetInstanceID` / `FieldPath` getters.
+  Used to key the revert-baseline dict. All existing call sites pass
+  the path string they already had; default-null fallback keeps the
+  ctor source-compatible for any out-of-tree user (none exist today
+  but the writer is internal anyway).
+- `VMGTweenBase` gained an `owner` back-pointer so code-driven tweens
+  can register baselines on first Evaluate. Wired automatically when
+  `VMGAnimate.EnsureFinalized` appends tweens to the animation.
+
+## [0.16.0] - 2026-06-13
+
+anime.js port group 3 #4: **MotionPath** — drive a target's
+`transform.position` along an arc-length parametrized curve, optionally
+auto-rotating to face the tangent. Closes the anime.js port at the
+code-API level (only Revert / group 2 #5 remains; the DSL is one
+parity round behind across groups 1–3).
+
+### Added
+
+- **`.AlongPath(VMGShapeAsset asset, int subShapeIndex = 0)`.** Follow
+  a sub-shape from a vector asset. The asset's sub-shape nodes are
+  tessellated through the existing Bezier flattener and stored as a
+  flat polyline with cumulative arc length, so a normalized `t` walks
+  the curve at uniform speed regardless of where the control points
+  cluster.
+
+  ```csharp
+  VMGFx.Animate(target)
+      .AlongPath(curveAsset)
+      .Duration(2f)
+      .Ease(VMGEasingPreset.InOut)
+      .Loop();
+  ```
+
+- **`.AlongPath(IList<Vector2> points, bool closed = false)`.** Inline
+  polyline variant for code-built paths. Same sampler, no asset
+  required. `closed` adds a wrap-around segment when at least 3 points.
+
+- **`.AutoRotate(float offsetDeg = 0)`.** Writes the curve's tangent
+  angle (in degrees, `Atan2(dy, dx) + offset`) into
+  `transform.eulerAngles.z`, so the target keeps its local +X facing
+  along the curve. Supply `-90` for sprites whose forward is +Y.
+
+### Notes
+
+- The motion-path tween is a `VMGTweenBase` peer to `VMGCodeTween`,
+  not a subclass. Position is computed by sampling the path at the
+  eased time, not interpolated between two endpoints — the easing
+  curve shapes *speed along the curve*, not the curve itself.
+- Vector3 channels preserve the current Z on first evaluate (lazy
+  capture mirroring code-tween's "from" capture). Vector2 channels
+  write XY directly.
+- Calling `.AlongPath` twice on the same animate replaces the pending
+  path; one animate carries one curve, anime.js parity.
+- The same animate can also have `.To(...)` tweens running in parallel
+  on other channels; composition follows the engine's
+  "last-registered wins per channel" rule.
+
 ## [0.15.0] - 2026-06-12
 
 anime.js port group 3 #2 + #3: **FunctionValue + Refresh** (lazy `.To`

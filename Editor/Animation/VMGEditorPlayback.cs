@@ -124,7 +124,7 @@ namespace VMG.EditorTools.Animation
             var component = go.GetComponent(type);
             if (component == null) return false;
             if (!VMGFieldPathCompiler.TryCompile(type, track.binding.fieldPath, out var path, out _)) return false;
-            writer = new VMGChannelWriter(component, path, track.type);
+            writer = new VMGChannelWriter(component, path, track.type, track.binding.fieldPath);
             if (!writer.IsTypeCompatible(out _)) { writer = null; return false; }
             reader = new VMGChannelReader(component, path, track.type);
             return true;

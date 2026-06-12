@@ -18,8 +18,8 @@ namespace VMG.Samples
             m_Graphic = GetComponent<VectorImageGraphic>();
 
             // Draw-on effect: trim end animates 0 -> 1.
-            m_Graphic.TrimModifier.start = 0f;
-            m_Graphic.TrimModifier.end = 0f;
+            m_Graphic.Trim.start = 0f;
+            m_Graphic.Trim.end = 0f;
             m_Graphic.DOTrim(1f, 0.8f).SetEase(Ease.OutCubic);
 
             // Stroke width pulse.

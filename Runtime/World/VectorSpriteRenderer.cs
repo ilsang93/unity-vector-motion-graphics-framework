@@ -14,25 +14,25 @@ namespace VMG.World
     public sealed class VectorSpriteRenderer : MonoBehaviour
     {
         [Tooltip("Optional SVG asset. When set, procedural shape/modifiers/style are bypassed. Object reference: NOT keyframable from AnimationClip — swap via script.")]
-        [SerializeField] private VMGShapeAsset m_SvgAsset;
+        public VMGShapeAsset SvgAsset;
         [Tooltip("SVG units per world unit when rendering an SVG asset. Keyframable.")]
-        [SerializeField] private float m_SvgUnitsPerWorldUnit = 100f;
-        [SerializeField] private ShapeStack m_ShapeStack = ShapeStack.Default();
-        [SerializeField] private StrokeStyle m_Stroke = StrokeStyle.Default;
-        [SerializeField] private FillStyle m_Fill = new FillStyle { enabled = true, color = Color.white };
-        [SerializeField] private DepthStyle m_Depth = DepthStyle.Default;
-        [SerializeField] private RoundCornerModifier m_RoundCorners = RoundCornerModifier.Default();
-        [SerializeField] private TrimPathModifier m_Trim = TrimPathModifier.Default();
+        public float SvgUnitsPerWorldUnit = 100f;
+        public ShapeStack ShapeStack = ShapeStack.Default();
+        public StrokeStyle Stroke = StrokeStyle.Default;
+        public FillStyle Fill = new FillStyle { enabled = true, color = Color.white };
+        public DepthStyle Depth = DepthStyle.Default;
+        public RoundCornerModifier RoundCorners = RoundCornerModifier.Default();
+        public TrimPathModifier Trim = TrimPathModifier.Default();
         [Tooltip("Multiplies all fill and stroke colors. Keyframable.")]
-        [SerializeField] private Color m_Tint = Color.white;
+        public Color Tint = Color.white;
         [Tooltip("Shader material. Object reference: NOT keyframable from AnimationClip — swap via script. Material property keyframing is also not supported through this component.")]
-        [SerializeField] private Material m_Material;
+        public Material Material;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Applied via MaterialPropertyBlock so the shared material stays shared. Object reference: NOT keyframable from AnimationClip — swap via script.")]
-        [SerializeField] private Texture m_Texture;
+        public Texture Texture;
         [Tooltip("Sorting layer ID for the underlying MeshRenderer. Keyframable (integer).")]
-        [SerializeField] private int m_SortingLayerID;
+        public int SortingLayerID;
         [Tooltip("Order in sorting layer. Keyframable.")]
-        [SerializeField] private int m_SortingOrder;
+        public int SortingOrder;
 
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_Combined = new MeshBuffer();
@@ -43,18 +43,6 @@ namespace VMG.World
         private MeshRenderer m_Renderer;
         private MaterialPropertyBlock m_PropertyBlock;
         private static readonly int s_MainTexID = Shader.PropertyToID("_MainTex");
-
-        public VMGShapeAsset SvgAsset { get => m_SvgAsset; set { m_SvgAsset = value; Rebuild(); } }
-        public ref ShapeStack ShapeStack => ref m_ShapeStack;
-        public ref StrokeStyle Stroke => ref m_Stroke;
-        public ref FillStyle Fill => ref m_Fill;
-        public ref DepthStyle Depth => ref m_Depth;
-        public ref RoundCornerModifier RoundCornerModifier => ref m_RoundCorners;
-        public ref TrimPathModifier TrimModifier => ref m_Trim;
-        public Material Material { get => m_Material; set { m_Material = value; ApplyMaterial(); } }
-        public Texture Texture { get => m_Texture; set { m_Texture = value; ApplyTexture(); } }
-        public int SortingLayerID { get => m_SortingLayerID; set { m_SortingLayerID = value; ApplySorting(); } }
-        public int SortingOrder { get => m_SortingOrder; set { m_SortingOrder = value; ApplySorting(); } }
 
         private void OnEnable()
         {
@@ -107,9 +95,9 @@ namespace VMG.World
         private void ApplyMaterial()
         {
             if (m_Renderer == null) return;
-            if (m_Material != null)
+            if (Material != null)
             {
-                if (m_Renderer.sharedMaterial != m_Material) m_Renderer.sharedMaterial = m_Material;
+                if (m_Renderer.sharedMaterial != Material) m_Renderer.sharedMaterial = Material;
             }
             else if (m_Renderer.sharedMaterial == null)
             {
@@ -122,11 +110,11 @@ namespace VMG.World
         private void ApplyTexture()
         {
             if (m_Renderer == null) return;
-            if (m_Texture != null)
+            if (Texture != null)
             {
                 if (m_PropertyBlock == null) m_PropertyBlock = new MaterialPropertyBlock();
                 m_Renderer.GetPropertyBlock(m_PropertyBlock);
-                m_PropertyBlock.SetTexture(s_MainTexID, m_Texture);
+                m_PropertyBlock.SetTexture(s_MainTexID, Texture);
                 m_Renderer.SetPropertyBlock(m_PropertyBlock);
             }
             else if (m_PropertyBlock != null)
@@ -143,8 +131,8 @@ namespace VMG.World
         private void ApplySorting()
         {
             if (m_Renderer == null) return;
-            m_Renderer.sortingLayerID = m_SortingLayerID;
-            m_Renderer.sortingOrder = m_SortingOrder;
+            m_Renderer.sortingLayerID = SortingLayerID;
+            m_Renderer.sortingOrder = SortingOrder;
         }
 
         // Stroke sits ε above the front fill face to avoid z-fighting when
@@ -158,7 +146,7 @@ namespace VMG.World
             EnsureRefs();
             m_Combined.Clear();
 
-            if (m_SvgAsset != null)
+            if (SvgAsset != null)
             {
                 BuildFromSvg();
                 NormalizeSvgUVs();
@@ -166,19 +154,19 @@ namespace VMG.World
                 return;
             }
 
-            bool extrude = m_Depth.enabled && m_Depth.thickness > 0f;
-            m_Depth.GetFaceZ(out float frontZ, out float backZ);
+            bool extrude = Depth.enabled && Depth.thickness > 0f;
+            Depth.GetFaceZ(out float frontZ, out float backZ);
 
             // Fill stage: ShapeStack -> RoundCorner. Trim is omitted so
             // the closed path survives for filling.
             m_Pipeline.workingPath.Clear();
-            m_ShapeStack.Build(m_Pipeline.workingPath);
-            if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
-            if (m_Fill.enabled)
+            ShapeStack.Build(m_Pipeline.workingPath);
+            if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Fill.enabled)
             {
-                var fill = m_Fill; fill.color *= m_Tint;
+                var fill = Fill; fill.color *= Tint;
                 if (extrude)
-                    FillMeshBuilder.BuildExtruded(m_Pipeline.workingPath, fill, m_Depth, m_Combined);
+                    FillMeshBuilder.BuildExtruded(m_Pipeline.workingPath, fill, Depth, m_Combined);
                 else
                     FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Combined);
             }
@@ -186,12 +174,12 @@ namespace VMG.World
             // Stroke stage: ShapeStack -> RoundCorner -> Trim.
             m_StrokeBuf.Clear();
             m_Pipeline.workingPath.Clear();
-            m_ShapeStack.Build(m_Pipeline.workingPath);
-            if (m_RoundCorners.Enabled) m_RoundCorners.Apply(m_Pipeline.workingPath);
-            if (m_Trim.Enabled) m_Trim.Apply(m_Pipeline.workingPath);
-            if (m_Stroke.enabled)
+            ShapeStack.Build(m_Pipeline.workingPath);
+            if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
+            if (Stroke.enabled)
             {
-                var stroke = m_Stroke; stroke.color *= m_Tint;
+                var stroke = Stroke; stroke.color *= Tint;
                 // In depth mode, force Inner alignment so the ribbon stays
                 // inside the fill silhouette. Center/Outer would leak past
                 // the side walls and break occlusion when the renderer is
@@ -225,8 +213,8 @@ namespace VMG.World
 
         private void NormalizeSvgUVs()
         {
-            var asset = m_SvgAsset;
-            float scale = m_SvgUnitsPerWorldUnit > 1e-5f ? 1f / m_SvgUnitsPerWorldUnit : 1f;
+            var asset = SvgAsset;
+            float scale = SvgUnitsPerWorldUnit > 1e-5f ? 1f / SvgUnitsPerWorldUnit : 1f;
             Vector2 size = asset.viewBoxSize * scale;
             Vector2 origin = -size * 0.5f;
             m_Combined.NormalizeUVsToRect(new Rect(origin.x, origin.y, size.x, size.y));
@@ -235,13 +223,13 @@ namespace VMG.World
         private readonly VectorPath m_SvgPath = new VectorPath();
         private void BuildFromSvg()
         {
-            var asset = m_SvgAsset;
-            float scale = m_SvgUnitsPerWorldUnit > 1e-5f ? 1f / m_SvgUnitsPerWorldUnit : 1f;
+            var asset = SvgAsset;
+            float scale = SvgUnitsPerWorldUnit > 1e-5f ? 1f / SvgUnitsPerWorldUnit : 1f;
             Vector2 origin = -asset.viewBoxSize * scale * 0.5f;
             // Bezier sample count comes from slot 0 (SVG ignores stacks
             // and modifiers, but it still needs a tessellation density).
-            int bezSamples = Mathf.Max(4, m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment > 0
-                                       ? m_ShapeStack.m_Slot0.shape.bezierSamplesPerSegment
+            int bezSamples = Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
+                                       ? ShapeStack.Slot0.shape.bezierSamplesPerSegment
                                        : 16);
 
             for (int s = 0; s < asset.subShapes.Count; s++)
@@ -258,12 +246,12 @@ namespace VMG.World
                 }
                 if (sub.fill.enabled)
                 {
-                    var fill = sub.fill; fill.color *= m_Tint;
+                    var fill = sub.fill; fill.color *= Tint;
                     FillMeshBuilder.Build(m_SvgPath, fill, m_Combined);
                 }
                 if (sub.stroke.enabled)
                 {
-                    var stroke = sub.stroke; stroke.color *= m_Tint;
+                    var stroke = sub.stroke; stroke.color *= Tint;
                     stroke.width *= scale;
                     StrokeMeshBuilder.Build(m_SvgPath, stroke, m_Combined);
                 }

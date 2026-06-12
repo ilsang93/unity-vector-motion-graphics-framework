@@ -31,8 +31,16 @@ namespace VMG.Animation.Core
     // Attribute keys recognised:
     //   add:       size, pos, position, rotation, fill, stroke, trim,
     //              roundCorner, fitToRect, sides, corner, cornerRadius,
-    //              points, closed
-    //   animate:   duration, ease, at, delay, endDelay, loop, alternate, from
+    //              cornerRadii, points, closed
+    //   animate:   duration, ease, at, delay, endDelay, loop, alternate, from,
+    //              refreshOnLoop
+    //
+    // Generator helpers (FunctionValue):
+    //   random(min, max [, seed])     — float in [min, max]
+    //   rangeInt(min, max [, seed])   — int in [min, max] inclusive
+    // Usable in any -> value, from= value, or keyframes path=value position
+    // on numeric channels. Seed (int) is optional — supply for deterministic
+    // sequences; omit for global UnityEngine.Random.
     //   set/call/label: at
     public static class VMGFxScript
     {
@@ -101,19 +109,37 @@ namespace VMG.Animation.Core
                     {
                         // Read until whitespace or a statement-terminating
                         // punct. '{' / '}' / ';' end the value; ',' is part of
-                        // tuple values so it's allowed inside.
-                        int start = i;
+                        // tuple values so it's allowed inside. Whitespace
+                        // inside balanced parens is preserved — this lets the
+                        // user write `random(-100, 100)` or
+                        // `cubicBezier(0.25, 0.1, 0.25, 1)` with readable
+                        // spacing instead of being forced into compact form.
+                        // Newlines still terminate the value (no
+                        // multi-line generator calls).
+                        int parenDepth = 0;
+                        var sb = new StringBuilder();
                         while (i < src.Length)
                         {
                             char vc = src[i];
-                            if (vc == ' ' || vc == '\t' || vc == '\n' || vc == '\r') break;
-                            if (vc == ';' || vc == '{' || vc == '}') break;
-                            // '//' inside a value ends the value (line comment).
-                            if (vc == '/' && i + 1 < src.Length && src[i + 1] == '/') break;
+                            if (vc == '\n' || vc == '\r') break;
+                            if (parenDepth == 0)
+                            {
+                                if (vc == ' ' || vc == '\t') break;
+                                if (vc == ';' || vc == '{' || vc == '}') break;
+                                // '//' inside a value ends the value (line comment).
+                                if (vc == '/' && i + 1 < src.Length && src[i + 1] == '/') break;
+                            }
+                            if (vc == '(') parenDepth++;
+                            else if (vc == ')' && parenDepth > 0) parenDepth--;
+                            // Drop spaces and tabs from inside parens so
+                            // downstream `SplitTuple` / `TryParseFloat` see the
+                            // same compact form as before. ',' is unchanged.
+                            if (parenDepth > 0 && (vc == ' ' || vc == '\t')) { i++; continue; }
+                            sb.Append(vc);
                             i++;
                         }
-                        if (i > start)
-                            list.Add(new Tok { kind = TokKind.Ident, text = src.Substring(start, i - start), line = line });
+                        if (sb.Length > 0)
+                            list.Add(new Tok { kind = TokKind.Ident, text = sb.ToString(), line = line });
                         valueMode = false;
                         continue;
                     }
@@ -128,7 +154,7 @@ namespace VMG.Animation.Core
                     }
 
                     // single-char punctuation
-                    if (c == '{' || c == '}' || c == ',' || c == '=' || c == ';')
+                    if (c == '{' || c == '}' || c == ',' || c == '=' || c == ';' || c == '%' || c == ':')
                     {
                         list.Add(new Tok { kind = TokKind.Symbol, text = c.ToString(), line = line });
                         i++;
@@ -181,7 +207,7 @@ namespace VMG.Animation.Core
 
                     // bareword / identifier — letters, digits, _ . # / + < (for at-position strings)
                     // We let any non-whitespace non-punctuation sequence form an identifier; the
-                    // parser interprets context. This makes hex colours (#fff), paths (m_Trim.end),
+                    // parser interprets context. This makes hex colours (#fff), paths (Trim.end),
                     // and position strings (+=0.2, <<) all single tokens.
                     if (IsIdentStart(c))
                     {
@@ -218,7 +244,10 @@ namespace VMG.Animation.Core
                 // 'size=200' into a single ident token. Same reason '-' and
                 // '+' must NOT be in ident bodies: they're only legal at the
                 // start ('+=N', '<', '<<').
-                if (c == '_' || c == '.' || c == '/' || c == '#' || c == '<') return true;
+                // '*' is allowed in body (not start) so the stagger wildcard
+                // target `dots/*` tokenises as a single ident; it stays
+                // illegal at start to avoid stealing tokens elsewhere.
+                if (c == '_' || c == '.' || c == '/' || c == '#' || c == '<' || c == '*') return true;
                 return false;
             }
         }
@@ -251,9 +280,67 @@ namespace VMG.Animation.Core
             public Dictionary<string, string> attrs = new Dictionary<string, string>();
         }
 
+        // Follow an arc-length parametrized curve. Mirrors the code-API
+        // VMGAnimate.AlongPath / AutoRotate pair. The target's
+        // transform.position is driven along the path; with autoRotate set,
+        // transform.eulerAngles.z is also written.
+        //
+        // Syntax: `motionPath <target> points=x1,y1,x2,y2,... [closed=true]
+        //          [autoRotate] [autoRotate=-90] [duration= ease= delay=
+        //          endDelay= loop= alternate at=]`
+        //
+        // `animate` can't host MotionPath cleanly because its
+        // `<target> <fieldPath> -> <toValue>` grammar requires a `to` value
+        // that MotionPath has no use for (the path drives position itself).
+        // A separate statement is cleaner than a dummy `-> 0,0`.
+        //
+        // Inline `points` only this round — asset binding is deferred to a
+        // future round that decides DSL asset registration in general.
+        internal sealed class MotionPathStmt : Stmt
+        {
+            public string target;
+            public Dictionary<string, string> attrs = new Dictionary<string, string>();
+        }
+
         internal sealed class TimelineStmt : Stmt
         {
+            public Dictionary<string, string> attrs = new Dictionary<string, string>();
             public List<Stmt> children = new List<Stmt>();
+        }
+
+        // Inside a timeline only. Subscribes an event name to a timeline
+        // lifecycle callback. The handler dispatches through
+        // VMGFxCompiled.RaiseEvent, sharing the same listener channel as
+        // `call`. Syntax: `on <event> -> <eventName>` where <event> is one of
+        // begin / beforeUpdate / update / render / loop / complete / pause.
+        internal sealed class OnStmt : Stmt
+        {
+            public string evt;
+            public string eventName;
+        }
+
+        // Inside a top-level or timeline scope. Multi-keyframe CSS-style
+        // block. Compiles into one or more segment animates (per channel,
+        // per gap between adjacent keyframes) added to the enclosing
+        // timeline. Syntax:
+        //   keyframes <target> [attrs] {
+        //     <pct>%: <path>=<value> [<path>=<value> ...]
+        //     <pct>%: ...
+        //   }
+        // Top-level keyframes implicitly wrap themselves in a timeline.
+        internal sealed class KeyframesStmt : Stmt
+        {
+            public string target;
+            public Dictionary<string, string> attrs = new Dictionary<string, string>();
+            public List<Keyframe> frames = new List<Keyframe>();
+        }
+
+        internal sealed class Keyframe
+        {
+            public float pct;            // 0..100
+            public int line;
+            public Dictionary<string, string> values = new Dictionary<string, string>();
+            public string easeOverride;  // optional per-frame ease
         }
 
         internal sealed class SetStmt : Stmt
@@ -274,6 +361,41 @@ namespace VMG.Animation.Core
         {
             public string name;
             public Dictionary<string, string> attrs = new Dictionary<string, string>();
+        }
+
+        // Repeat-with-index block. Mirrors VMGTimeline.Stagger(targets, build,
+        // step, from, seed) from the code API. Resolves a wildcard target spec
+        // like `dots/*` (direct children of a named group, scene order) into
+        // N components, then runs each child statement once per target with
+        // `it`/`i`/`n` substituted at target/value positions before the
+        // existing AnimateStmt / MotionPathStmt code paths take over.
+        //
+        // Syntax:
+        //   stagger <group>/* [step=F] [from=first|center|last|random]
+        //                     [seed=N] [at=POS] {
+        //       animate it <path> -> <value> [attrs ...]
+        //       animate it.transform <path> -> <value> [attrs ...]
+        //       motionPath it points=... [attrs ...]
+        //   }
+        //
+        // Per-block bindings inside the body:
+        //   it — current child component (target position only)
+        //   i  — index (0..n-1)            (value position only)
+        //   n  — total target count        (value position only)
+        // These names are stagger-scoped; outside the block they remain
+        // ordinary identifiers (the compiler only substitutes when expanding
+        // child statements under a StaggerStmt parent).
+        //
+        // Allowed child statements: animate, motionPath. set/call/label are
+        // not allowed (label-per-child / call-per-child semantics are
+        // ambiguous). Block is legal both inside a `timeline { ... }` and at
+        // top level — top-level wraps itself in an implicit timeline,
+        // mirroring `keyframes`.
+        internal sealed class StaggerStmt : Stmt
+        {
+            public string targetWildcard;  // e.g. "dots/*"
+            public Dictionary<string, string> attrs = new Dictionary<string, string>();
+            public List<Stmt> children = new List<Stmt>();
         }
 
         // ----- Parser -----
@@ -311,10 +433,14 @@ namespace VMG.Animation.Core
                     case "add": return ParseAdd(p);
                     case "group": return ParseGroup(p);
                     case "animate": return ParseAnimate(p);
+                    case "motionPath": return ParseMotionPath(p);
                     case "timeline": return ParseTimeline(p);
+                    case "keyframes": return ParseKeyframes(p);
+                    case "stagger": return ParseStagger(p);
                     case "set": if (insideTimeline) return ParseSet(p); break;
                     case "call": if (insideTimeline) return ParseCall(p); break;
                     case "label": if (insideTimeline) return ParseLabel(p); break;
+                    case "on": if (insideTimeline) return ParseOn(p); break;
                 }
                 p.Error($"unknown statement '{t.text}'");
                 p.SkipToNewline();
@@ -366,10 +492,23 @@ namespace VMG.Animation.Core
                 return new AnimateStmt { line = line, target = target, path = path, toValue = toValue, attrs = attrs };
             }
 
+            static MotionPathStmt ParseMotionPath(ParseState p)
+            {
+                int line = p.Peek().line;
+                p.Consume(); // 'motionPath'
+                string target = p.ExpectIdent("motionPath target");
+                var attrs = ParseAttributes(p);
+                p.EndStatement();
+                return new MotionPathStmt { line = line, target = target, attrs = attrs };
+            }
+
             static TimelineStmt ParseTimeline(ParseState p)
             {
                 int line = p.Peek().line;
                 p.Consume(); // 'timeline'
+                // Header attrs: `timeline duration=2 ease=outQuad rate=1.5 { ... }`.
+                // Parsed up to the opening brace.
+                var attrs = ParseAttributes(p);
                 p.ExpectSymbol("{");
                 var children = new List<Stmt>();
                 p.SkipNewlines();
@@ -383,7 +522,86 @@ namespace VMG.Animation.Core
                 }
                 p.ExpectSymbol("}");
                 p.EndStatement();
-                return new TimelineStmt { line = line, children = children };
+                return new TimelineStmt { line = line, attrs = attrs, children = children };
+            }
+
+            static OnStmt ParseOn(ParseState p)
+            {
+                int line = p.Peek().line;
+                p.Consume(); // 'on'
+                string evt = p.ExpectIdent("event name (begin/beforeUpdate/update/render/loop/complete/pause)");
+                p.ExpectArrow();
+                string eventName = ParseValue(p);
+                p.EndStatement();
+                return new OnStmt { line = line, evt = evt, eventName = eventName };
+            }
+
+            // `keyframes <target> [attrs] { <pct>%: k=v ...; <pct>%: ...; ... }`.
+            // The body is a sequence of "<pct>%:" lines, each carrying a flat
+            // key=value attribute list of per-channel values. ';' or newline
+            // separates frames.
+            static KeyframesStmt ParseKeyframes(ParseState p)
+            {
+                int line = p.Peek().line;
+                p.Consume(); // 'keyframes'
+                string target = p.ExpectIdent("keyframes target");
+                var attrs = ParseAttributes(p);
+                p.ExpectSymbol("{");
+                var frames = new List<Keyframe>();
+                p.SkipNewlines();
+                while (!p.AtEnd)
+                {
+                    var t = p.Peek();
+                    if (t.kind == TokKind.Symbol && t.text == "}") break;
+
+                    // Each frame: '<pct>%:' header followed by attr list.
+                    var pctTok = p.Peek();
+                    if (pctTok.kind != TokKind.Ident && pctTok.kind != TokKind.Number)
+                    {
+                        p.Error($"expected keyframe percent, got '{pctTok.text}'");
+                        p.SkipToNewline();
+                        p.SkipNewlines();
+                        continue;
+                    }
+                    string pctRaw = pctTok.text;
+                    p.Consume();
+
+                    // Accept either '12%' baked into the ident, or split tokens
+                    // '12' '%' (the tokenizer emits '%' as its own Symbol).
+                    if (pctRaw.EndsWith("%")) pctRaw = pctRaw.Substring(0, pctRaw.Length - 1);
+                    else
+                    {
+                        var maybePct = p.Peek();
+                        if (maybePct.kind == TokKind.Symbol && maybePct.text == "%") p.Consume();
+                    }
+
+                    // Allow CSS keywords from/to in place of 0/100.
+                    if (pctRaw == "from") pctRaw = "0";
+                    else if (pctRaw == "to") pctRaw = "100";
+
+                    if (!TryParseFloat(pctRaw, out var pct))
+                    {
+                        p.Error($"keyframe percent '{pctRaw}' is not numeric");
+                        p.SkipToNewline();
+                        p.SkipNewlines();
+                        continue;
+                    }
+
+                    // ':' separator before the value list. Required; if
+                    // missing, attribute parsing still works but a misplaced
+                    // identifier would be confusing.
+                    var sep = p.Peek();
+                    if (sep.kind == TokKind.Symbol && sep.text == ":") p.Consume();
+
+                    var values = ParseAttributes(p);
+                    string easeOverride = null;
+                    if (values.TryGetValue("ease", out var ev)) { easeOverride = ev; values.Remove("ease"); }
+                    frames.Add(new Keyframe { pct = pct, line = pctTok.line, values = values, easeOverride = easeOverride });
+                    p.SkipNewlines();
+                }
+                p.ExpectSymbol("}");
+                p.EndStatement();
+                return new KeyframesStmt { line = line, target = target, attrs = attrs, frames = frames };
             }
 
             static SetStmt ParseSet(ParseState p)
@@ -419,6 +637,37 @@ namespace VMG.Animation.Core
                 return new LabelStmt { line = line, name = name, attrs = attrs };
             }
 
+            // `stagger <wildcard> [attrs] { <animate|motionPath ...>; ... }`.
+            // The wildcard is a target spec terminated by '/*' — only that
+            // form is supported this round. Body grammar matches the
+            // `timeline { ... }` block (statements separated by newlines);
+            // body statements are validated at compile time to be just
+            // animate / motionPath (the compiler logs an error otherwise).
+            static StaggerStmt ParseStagger(ParseState p)
+            {
+                int line = p.Peek().line;
+                p.Consume(); // 'stagger'
+                string wildcard = p.ExpectIdent("stagger target wildcard (e.g. 'dots/*')");
+                var attrs = ParseAttributes(p);
+                p.ExpectSymbol("{");
+                var children = new List<Stmt>();
+                p.SkipNewlines();
+                while (!p.AtEnd)
+                {
+                    var t = p.Peek();
+                    if (t.kind == TokKind.Symbol && t.text == "}") break;
+                    // insideTimeline=false so set/call/label/on are rejected
+                    // at parse time. animate / motionPath are the only legal
+                    // statements inside a stagger block.
+                    var c = ParseStatement(p, insideTimeline: false);
+                    if (c != null) children.Add(c);
+                    p.SkipNewlines();
+                }
+                p.ExpectSymbol("}");
+                p.EndStatement();
+                return new StaggerStmt { line = line, targetWildcard = wildcard, attrs = attrs, children = children };
+            }
+
             // The tokenizer's value-mode emits the entire RHS of '=' or '->'
             // as a single Ident token (whitespace-terminated), so ParseValue
             // is just one atom.
@@ -436,6 +685,12 @@ namespace VMG.Animation.Core
 
             // key=value attribute list. value may be a tuple (comma-separated
             // atoms). Stops at newline / EOF / closing brace.
+            //
+            // Bare keys (no `=value`) are accepted and registered with an
+            // empty-string value. Downstream attr handlers treat empty /
+            // missing as "on" for flag attrs (`loop`, `alternate`,
+            // `autoRotate`, `refreshOnLoop`). This matches the doc-comment
+            // examples (`loop alternate`) and anime.js's flag form.
             static Dictionary<string, string> ParseAttributes(ParseState p)
             {
                 var attrs = new Dictionary<string, string>();
@@ -443,7 +698,13 @@ namespace VMG.Animation.Core
                 {
                     var t = p.Peek();
                     if (t.kind == TokKind.Newline || t.kind == TokKind.EOF) break;
-                    if (t.kind == TokKind.Symbol && (t.text == "}" || t.text == ";")) break;
+                    // `{` terminates an attribute list because block statements
+                    // (timeline / keyframes / group / stagger) can carry header
+                    // attrs on the same line as the opening brace, e.g.
+                    // `stagger dots/* step=0.1 from=center { ... }`. Without
+                    // this stop the parser would treat `{` as an attribute key
+                    // and fail. `}` / `;` were already terminators.
+                    if (t.kind == TokKind.Symbol && (t.text == "}" || t.text == ";" || t.text == "{")) break;
 
                     if (t.kind != TokKind.Ident)
                     {
@@ -456,16 +717,18 @@ namespace VMG.Animation.Core
                     p.Consume();
 
                     var eq = p.Peek();
-                    if (eq.kind != TokKind.Symbol || eq.text != "=")
+                    if (eq.kind == TokKind.Symbol && eq.text == "=")
                     {
-                        p.Error($"expected '=' after attribute key '{key}', got '{eq.text}'");
-                        p.SkipToNewline();
-                        break;
+                        p.Consume(); // '='
+                        string value = ParseValue(p);
+                        attrs[key] = value;
                     }
-                    p.Consume(); // '='
-
-                    string value = ParseValue(p);
-                    attrs[key] = value;
+                    else
+                    {
+                        // Bare flag — register key with empty value; handlers
+                        // treat empty as "on" for the flag-style attrs.
+                        attrs[key] = "";
+                    }
                 }
                 return attrs;
             }
@@ -558,14 +821,350 @@ namespace VMG.Animation.Core
                     else if (s is GroupStmt grpS) ApplyGroup(grpS, scene);
                 }
 
-                // Pass 2: animations / timelines. We resolve names via the
-                // scene's child lookup; if a target isn't in the scene we fall
-                // back to looking up a child Transform under root.
+                // Pass 2: animations / timelines / keyframes. We resolve
+                // names via the scene's child lookup; if a target isn't in
+                // the scene we fall back to looking up a child Transform
+                // under root. Top-level keyframes / stagger auto-wrap in a
+                // one-off timeline so the expansion has somewhere to live.
                 foreach (var s in statements)
                 {
                     if (s is AnimateStmt anim) BuildStandaloneAnimate(anim, scene, root, compiled);
+                    else if (s is MotionPathStmt mp) BuildStandaloneMotionPath(mp, scene, root, compiled);
                     else if (s is TimelineStmt tl) BuildTimeline(tl, scene, root, compiled);
+                    else if (s is KeyframesStmt kf) BuildStandaloneKeyframes(kf, scene, root, compiled);
+                    else if (s is StaggerStmt stg) BuildStandaloneStagger(stg, scene, root, compiled);
                 }
+            }
+
+            // Top-level stagger: wrap an implicit timeline around the block so
+            // tl.Stagger has somewhere to add its children. Mirrors
+            // BuildStandaloneKeyframes — `at=` on a top-level stagger is
+            // ignored (no enclosing timeline to position within); other
+            // header attrs (step/from/seed) flow to the Stagger call.
+            static void BuildStandaloneStagger(StaggerStmt stg, VMGScene scene, Transform root, VMGFxCompiled compiled)
+            {
+                var tl = VMGFx.Timeline();
+                compiled.timelines.Add(tl);
+                ExpandStaggerIntoTimeline(tl, stg, scene, root, compiled);
+            }
+
+            // Resolve the wildcard target, run the body once per child with
+            // it/i/n substituted, and hand the resulting builders to
+            // tl.Stagger via its (target, index, count) lambda overload.
+            //
+            // Substitution happens on freshly-cloned per-child copies of the
+            // AST so the original StaggerStmt remains untouched for any
+            // future recompile (script-mode OnEnable re-runs).
+            static void ExpandStaggerIntoTimeline(VMGTimeline tl, StaggerStmt stg, VMGScene scene, Transform root, VMGFxCompiled compiled)
+            {
+                if (stg.children == null || stg.children.Count == 0)
+                {
+                    Debug.LogWarning("[VMGFx] stagger: empty block, nothing to do");
+                    return;
+                }
+
+                // Validate child statement types up-front so the error points
+                // at the stagger block instead of the deeper compile path.
+                foreach (var c in stg.children)
+                {
+                    if (c is AnimateStmt || c is MotionPathStmt) continue;
+                    Debug.LogError($"[VMGFx] stagger line {c.line}: only 'animate' and 'motionPath' are allowed inside a stagger block (got {c.GetType().Name})");
+                    return;
+                }
+
+                var targets = ResolveStaggerTargets(stg.targetWildcard, scene, root, stg);
+                if (targets == null || targets.Count == 0)
+                {
+                    Debug.LogError($"[VMGFx] stagger: target '{stg.targetWildcard}' resolved to no components");
+                    return;
+                }
+
+                // Header attrs.
+                float step = 0.1f;
+                VMGStaggerFrom from = VMGStaggerFrom.First;
+                int? seed = null;
+                VMGAt at = VMGAt.End();
+                if (stg.attrs != null)
+                {
+                    foreach (var kv in stg.attrs)
+                    {
+                        switch (kv.Key)
+                        {
+                            case "step": if (TryParseFloat(kv.Value, out var sv)) step = sv; break;
+                            case "from": from = ParseStaggerFrom(kv.Value); break;
+                            case "seed": if (TryParseInt(kv.Value, out var sd)) seed = sd; break;
+                            case "at": at = string.IsNullOrEmpty(kv.Value) ? VMGAt.End() : VMGAt.Parse(kv.Value); break;
+                            default:
+                                Debug.LogWarning($"[VMGFx] unknown stagger attribute '{kv.Key}'");
+                                break;
+                        }
+                    }
+                }
+
+                int total = targets.Count;
+                // Capture scene for non-`it` target fallback inside the
+                // lambda. Most bodies use `it`, but a stagger body is also
+                // free to reference a sibling/global by name — that path
+                // goes through the standard ResolveTarget and needs the
+                // scene + root.
+                var sceneRef = scene;
+                tl.Stagger<Component>(targets, (Component childTarget, int idx, int n) =>
+                {
+                    // Build one VMGAnimate per child by re-running the body
+                    // with it/i/n substituted. The body usually has one
+                    // statement; multiple statements all attach to the same
+                    // builder (sequential AnimateStmt/MotionPathStmt would
+                    // need a per-child mini-timeline — we currently take the
+                    // *last* configured tween as the child contribution and
+                    // warn). For the common one-statement case this is a
+                    // 1:1 mapping.
+                    VMGAnimate builder = null;
+                    foreach (var c in stg.children)
+                    {
+                        if (c is AnimateStmt aSrc)
+                        {
+                            var a = CloneAnimateForStagger(aSrc, idx, n);
+                            var resolved = ResolveStaggerChildTarget(a.target, childTarget, sceneRef, root, a.path);
+                            if (resolved == null)
+                            {
+                                Debug.LogError($"[VMGFx] stagger line {a.line}: target '{a.target}' did not resolve for child #{idx} ('{childTarget?.name}')");
+                                continue;
+                            }
+                            if (builder != null)
+                                Debug.LogWarning($"[VMGFx] stagger line {a.line}: multiple animate/motionPath statements in a stagger block — only the last one's tween is staggered. Wrap each in its own stagger block for now.");
+                            builder = VMGFx.Animate(resolved);
+                            ConfigureAnimate(builder, a.path, a.toValue, a.attrs, resolved);
+                        }
+                        else if (c is MotionPathStmt mSrc)
+                        {
+                            var m = CloneMotionPathForStagger(mSrc, idx, n);
+                            var resolved = ResolveStaggerChildTarget(m.target, childTarget, sceneRef, root, null);
+                            if (resolved == null)
+                            {
+                                Debug.LogError($"[VMGFx] stagger line {m.line}: motionPath target '{m.target}' did not resolve for child #{idx} ('{childTarget?.name}')");
+                                continue;
+                            }
+                            if (builder != null)
+                                Debug.LogWarning($"[VMGFx] stagger line {m.line}: multiple animate/motionPath statements in a stagger block — only the last one's tween is staggered.");
+                            builder = VMGFx.Animate(resolved);
+                            ConfigureMotionPath(builder, m.attrs);
+                        }
+                    }
+                    return builder;
+                }, step, from, at, seed);
+            }
+
+            // Wildcard target resolution. Only `<group>/*` is supported this
+            // round — direct children of the named group, scene order. The
+            // group is looked up first in the scene's group dict (via
+            // Transform.Find on root, which handles nested 'a/b/c' paths
+            // too), then each direct child is walked for its renderer
+            // Component; if no renderer is found, the Transform itself is
+            // used as the target so attribute paths like 'localScale' still
+            // work. Returns a fresh list (caller mutates / iterates).
+            static List<Component> ResolveStaggerTargets(string spec, VMGScene scene, Transform root, StaggerStmt stg)
+            {
+                if (string.IsNullOrEmpty(spec))
+                {
+                    Debug.LogError($"[VMGFx] stagger line {stg.line}: empty target");
+                    return null;
+                }
+                if (!spec.EndsWith("/*"))
+                {
+                    Debug.LogError($"[VMGFx] stagger line {stg.line}: target '{spec}' must end with '/*' (only wildcard form is supported this round)");
+                    return null;
+                }
+                string groupName = spec.Substring(0, spec.Length - 2);
+                Transform groupTr = string.IsNullOrEmpty(groupName) || groupName == "/" || groupName == "root"
+                    ? root
+                    : root.Find(groupName);
+                if (groupTr == null)
+                {
+                    Debug.LogError($"[VMGFx] stagger line {stg.line}: group '{groupName}' not found under root");
+                    return null;
+                }
+                var list = new List<Component>(groupTr.childCount);
+                for (int i = 0; i < groupTr.childCount; i++)
+                {
+                    var ct = groupTr.GetChild(i);
+                    // Prefer a renderer component (VectorImageGraphic /
+                    // VectorSpriteRenderer) so `Fill.color`, `Trim.end`,
+                    // etc. resolve straight away. Fall back to Transform.
+                    Component pick = ct.GetComponent<VMG.UI.VectorImageGraphic>();
+                    if (pick == null) pick = ct.GetComponent<VMG.World.VectorSpriteRenderer>();
+                    if (pick == null) pick = ct;
+                    list.Add(pick);
+                }
+                return list;
+            }
+
+            // Inside a stagger body, the child's literal target token is
+            // either `it` (current wildcard match), `it.transform` (its
+            // Transform), or a normal target name that falls through to the
+            // standard ResolveTarget. We treat `it` specially because the
+            // standard ResolveTarget would try to look up an object literally
+            // named "it" under root.
+            static Component ResolveStaggerChildTarget(string targetSpec, Component childPrimary, VMGScene scene, Transform root, string path)
+            {
+                if (string.IsNullOrEmpty(targetSpec)) return null;
+                if (targetSpec == "it")
+                {
+                    if (childPrimary == null) return null;
+                    if (string.IsNullOrEmpty(path)) return childPrimary;
+                    // If the path doesn't compile on the primary, fall back
+                    // to the Transform — same rule as PickByPath.
+                    if (VMG.Animation.VMGFieldPathCompiler.TryCompile(childPrimary.GetType(), path, out _, out _))
+                        return childPrimary;
+                    return childPrimary.transform;
+                }
+                if (targetSpec == "it.transform")
+                {
+                    return childPrimary != null ? childPrimary.transform : null;
+                }
+                // Non-`it` target: fall back to the standard resolver. Useful
+                // for animating a sibling/global thing from inside the loop,
+                // though the body usually targets `it`.
+                return ResolveTarget(targetSpec, scene, root, path);
+            }
+
+            // Clone an AnimateStmt for a specific stagger index. The original
+            // is preserved (so a script-mode OnEnable re-run sees the same
+            // AST), while the clone's path / toValue / each attr value are
+            // walked for standalone `i` / `n` tokens (word-boundary aware) and
+            // substituted with the current index / total. Target keeps `it`
+            // / `it.transform` literal so ResolveStaggerChildTarget can
+            // recognise it.
+            static AnimateStmt CloneAnimateForStagger(AnimateStmt src, int index, int total)
+            {
+                var attrs = new Dictionary<string, string>();
+                if (src.attrs != null)
+                {
+                    foreach (var kv in src.attrs)
+                        attrs[kv.Key] = SubstituteStaggerVars(kv.Value, index, total);
+                }
+                return new AnimateStmt
+                {
+                    line = src.line,
+                    target = src.target,
+                    path = SubstituteStaggerVars(src.path, index, total),
+                    toValue = SubstituteStaggerVars(src.toValue, index, total),
+                    attrs = attrs,
+                };
+            }
+
+            static MotionPathStmt CloneMotionPathForStagger(MotionPathStmt src, int index, int total)
+            {
+                var attrs = new Dictionary<string, string>();
+                if (src.attrs != null)
+                {
+                    foreach (var kv in src.attrs)
+                        attrs[kv.Key] = SubstituteStaggerVars(kv.Value, index, total);
+                }
+                return new MotionPathStmt
+                {
+                    line = src.line,
+                    target = src.target,
+                    attrs = attrs,
+                };
+            }
+
+            // Replace the standalone tokens `i` and `n` (word-boundary aware:
+            // boundary = anything not in [A-Za-z0-9_]) with the index / total
+            // numeric literals. Guards against mangling `inOutQuad`, `linear`,
+            // identifier substrings inside generator names, etc.
+            //
+            // The check at start-of-string treats position 0 as a boundary;
+            // same for end-of-string. This makes `i` alone, `i,` (inside
+            // tuples), `random(0, 10, i)` all substitute correctly.
+            static string SubstituteStaggerVars(string s, int index, int total)
+            {
+                if (string.IsNullOrEmpty(s)) return s;
+                if (s.IndexOf('i') < 0 && s.IndexOf('n') < 0) return s;
+                var sb = new StringBuilder(s.Length);
+                int len = s.Length;
+                for (int i = 0; i < len; i++)
+                {
+                    char c = s[i];
+                    if ((c == 'i' || c == 'n') && IsStaggerVarBoundary(i == 0 ? '\0' : s[i - 1]) && IsStaggerVarBoundary(i + 1 >= len ? '\0' : s[i + 1]))
+                    {
+                        sb.Append((c == 'i' ? index : total).ToString(CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                }
+                return sb.ToString();
+            }
+
+            static bool IsStaggerVarBoundary(char c)
+            {
+                if (c == '\0') return true;
+                if (c >= 'a' && c <= 'z') return false;
+                if (c >= 'A' && c <= 'Z') return false;
+                if (c >= '0' && c <= '9') return false;
+                if (c == '_') return false;
+                return true;
+            }
+
+            static VMGStaggerFrom ParseStaggerFrom(string raw)
+            {
+                if (string.IsNullOrEmpty(raw)) return VMGStaggerFrom.First;
+                switch (raw)
+                {
+                    case "first": return VMGStaggerFrom.First;
+                    case "center": return VMGStaggerFrom.Center;
+                    case "last": return VMGStaggerFrom.Last;
+                    case "random": return VMGStaggerFrom.Random;
+                    default:
+                        Debug.LogWarning($"[VMGFx] unknown stagger from='{raw}' (expected first/center/last/random)");
+                        return VMGStaggerFrom.First;
+                }
+            }
+
+            // Top-level keyframes: wrap a fresh timeline around the block.
+            // The block's `loop` / `alternate` / `delay` attrs are migrated
+            // from the keyframes to the wrapping timeline so they take effect
+            // (inside-a-timeline ExpandKeyframesIntoTimeline rejects them).
+            static void BuildStandaloneKeyframes(KeyframesStmt kf, VMGScene scene, Transform root, VMGFxCompiled compiled)
+            {
+                var target = ResolveTarget(kf.target, scene, root, FirstKeyframePath(kf));
+                if (target == null) { Debug.LogError($"[VMGFx] keyframes: target '{kf.target}' not found"); return; }
+                var tl = VMGFx.Timeline();
+                compiled.timelines.Add(tl);
+
+                // Migrate timeline-level attrs from the keyframes block to the
+                // wrapping timeline so the user can write
+                //   keyframes box { ... } duration=2 loop alternate
+                // and get the expected behaviour.
+                var tlAttrs = new Dictionary<string, string>();
+                if (kf.attrs != null)
+                {
+                    foreach (var kv in kf.attrs)
+                    {
+                        if (kv.Key == "loop" || kv.Key == "loopDelay" || kv.Key == "alternate" ||
+                            kv.Key == "reversed" || kv.Key == "paused" ||
+                            kv.Key == "rate" || kv.Key == "playbackRate" ||
+                            kv.Key == "playbackEase")
+                        {
+                            tlAttrs[kv.Key] = kv.Value;
+                        }
+                    }
+                }
+                ApplyTimelineHeaderAttrs(tl, tlAttrs, compiled);
+
+                // Strip the migrated keys so the block-level expansion doesn't
+                // re-apply them and warn.
+                var trimmed = new Dictionary<string, string>();
+                if (kf.attrs != null)
+                {
+                    foreach (var kv in kf.attrs)
+                    {
+                        if (!tlAttrs.ContainsKey(kv.Key)) trimmed[kv.Key] = kv.Value;
+                    }
+                }
+                var tmp = new KeyframesStmt { line = kf.line, target = kf.target, attrs = trimmed, frames = kf.frames };
+                ExpandKeyframesIntoTimeline(tl, tmp, target);
             }
 
             static void ApplyAdd(AddStmt s, VMGScene scene)
@@ -600,7 +1199,14 @@ namespace VMG.Animation.Core
                     case "roundedRectangle":
                     {
                         var d = VMGFx.RoundedRectangle();
-                        if (attrs != null && (attrs.TryGetValue("cornerRadius", out var cr) || attrs.TryGetValue("corner", out cr)))
+                        // Prefer the X/Y form when explicit; otherwise the
+                        // single-radius form expands to (r, r).
+                        if (attrs != null && attrs.TryGetValue("cornerRadii", out var cr2))
+                        {
+                            if (TryParseVector2(cr2, out var v)) d.CornerRadii(v);
+                            else if (TryParseFloat(cr2, out var f)) d.CornerRadius(f);
+                        }
+                        else if (attrs != null && (attrs.TryGetValue("cornerRadius", out var cr) || attrs.TryGetValue("corner", out cr)))
                         {
                             if (TryParseFloat(cr, out var v)) d.CornerRadius(v);
                         }
@@ -628,7 +1234,7 @@ namespace VMG.Animation.Core
                             d.Points(list.ToArray());
                         }
                         if (attrs != null && attrs.TryGetValue("closed", out var closed))
-                            d.Closed(ParseBool(closed));
+                            d.Closed(ParseFlag(closed));
                         return d;
                     }
                 }
@@ -687,13 +1293,14 @@ namespace VMG.Animation.Core
                         }
                         case "fitToRect":
                         {
-                            ApplyFitToRect(d, ParseBool(kv.Value));
+                            ApplyFitToRect(d, ParseFlag(kv.Value));
                             break;
                         }
                         // shape-specific keys handled in MakeDescriptor:
                         case "sides":
                         case "corner":
                         case "cornerRadius":
+                        case "cornerRadii":
                         case "points":
                         case "closed":
                             break;
@@ -761,10 +1368,20 @@ namespace VMG.Animation.Core
                 compiled.standaloneAnimates.Add(builder);
             }
 
+            static void BuildStandaloneMotionPath(MotionPathStmt mp, VMGScene scene, Transform root, VMGFxCompiled compiled)
+            {
+                var target = ResolveTarget(mp.target, scene, root, null);
+                if (target == null) { Debug.LogError($"[VMGFx] motionPath: target '{mp.target}' not found"); return; }
+                var builder = VMGFx.Animate(target);
+                ConfigureMotionPath(builder, mp.attrs);
+                compiled.standaloneAnimates.Add(builder);
+            }
+
             static void BuildTimeline(TimelineStmt t, VMGScene scene, Transform root, VMGFxCompiled compiled)
             {
                 var tl = VMGFx.Timeline();
                 compiled.timelines.Add(tl);
+                ApplyTimelineHeaderAttrs(tl, t.attrs, compiled);
                 foreach (var c in t.children)
                 {
                     switch (c)
@@ -776,6 +1393,16 @@ namespace VMG.Animation.Core
                             var builder = VMGFx.Animate(target);
                             ConfigureAnimate(builder, anim.path, anim.toValue, anim.attrs, target);
                             var at = ExtractAt(anim.attrs);
+                            tl.Add(builder, at);
+                            break;
+                        }
+                        case MotionPathStmt mp:
+                        {
+                            var target = ResolveTarget(mp.target, scene, root, null);
+                            if (target == null) { Debug.LogError($"[VMGFx] motionPath: target '{mp.target}' not found"); break; }
+                            var builder = VMGFx.Animate(target);
+                            ConfigureMotionPath(builder, mp.attrs);
+                            var at = ExtractAt(mp.attrs);
                             tl.Add(builder, at);
                             break;
                         }
@@ -800,8 +1427,352 @@ namespace VMG.Animation.Core
                             tl.Label(labelS.name, at);
                             break;
                         }
+                        case OnStmt onS:
+                        {
+                            BindTimelineCallback(tl, onS.evt, onS.eventName, compiled, onS.line);
+                            break;
+                        }
+                        case KeyframesStmt kf:
+                        {
+                            var target = ResolveTarget(kf.target, scene, root, FirstKeyframePath(kf));
+                            if (target == null) { Debug.LogError($"[VMGFx] keyframes: target '{kf.target}' not found"); break; }
+                            ExpandKeyframesIntoTimeline(tl, kf, target);
+                            break;
+                        }
+                        case StaggerStmt stg:
+                        {
+                            ExpandStaggerIntoTimeline(tl, stg, scene, root, compiled);
+                            break;
+                        }
                     }
                 }
+            }
+
+            // Apply attrs from a `timeline <attrs> { ... }` header. Keys map
+            // 1:1 to the corresponding VMGTimeline setter (Duration, Defaults,
+            // PlaybackEase, PlaybackRate, Loop, Alternate, etc).
+            static void ApplyTimelineHeaderAttrs(VMGTimeline tl, Dictionary<string, string> attrs, VMGFxCompiled compiled)
+            {
+                if (attrs == null || attrs.Count == 0) return;
+                foreach (var kv in attrs)
+                {
+                    switch (kv.Key)
+                    {
+                        case "duration": if (TryParseFloat(kv.Value, out var dur)) tl.Duration(dur); break;
+                        case "ease": tl.Defaults(ResolveEase(kv.Value)); break;
+                        case "playbackEase": tl.PlaybackEase(ResolveEase(kv.Value)); break;
+                        case "rate":
+                        case "playbackRate": if (TryParseFloat(kv.Value, out var r)) tl.PlaybackRate = r; break;
+                        case "loop":
+                        {
+                            if (string.IsNullOrEmpty(kv.Value) || ParseBool(kv.Value)) tl.Loop();
+                            else if (TryParseInt(kv.Value, out var ln)) tl.Loop(ln);
+                            break;
+                        }
+                        case "loopDelay": if (TryParseFloat(kv.Value, out var ld)) tl.LoopDelay(ld); break;
+                        case "alternate": tl.Alternate(ParseFlag(kv.Value)); break;
+                        case "reversed": tl.Reversed(ParseFlag(kv.Value)); break;
+                        case "paused": tl.Paused(ParseFlag(kv.Value)); break;
+                        default:
+                            Debug.LogWarning($"[VMGFx] unknown timeline attribute '{kv.Key}'");
+                            break;
+                    }
+                }
+            }
+
+            // Hook a script event name onto a timeline lifecycle callback.
+            // Dispatch goes through VMGFxCompiled.RaiseEvent so the wiring
+            // matches `call` exactly — one listener channel for everything
+            // user-visible.
+            static void BindTimelineCallback(VMGTimeline tl, string evt, string eventName, VMGFxCompiled compiled, int line)
+            {
+                Action handler = () => compiled.RaiseEvent(eventName);
+                switch (evt)
+                {
+                    case "begin": tl.OnBegin(handler); break;
+                    case "beforeUpdate": tl.OnBeforeUpdate(handler); break;
+                    case "update": tl.OnUpdate(handler); break;
+                    case "render": tl.OnRender(handler); break;
+                    case "loop": tl.OnLoop(handler); break;
+                    case "complete": tl.OnComplete(handler); break;
+                    case "pause": tl.OnPause(handler); break;
+                    default:
+                        Debug.LogError($"[VMGFx] line {line}: unknown event '{evt}' (expected begin/beforeUpdate/update/render/loop/complete/pause)");
+                        break;
+                }
+            }
+
+            // Pick any non-attr key in the first keyframe to disambiguate
+            // renderer-vs-Transform target resolution. ResolveTarget only
+            // needs *a* candidate path for that decision.
+            static string FirstKeyframePath(KeyframesStmt kf)
+            {
+                if (kf.frames == null || kf.frames.Count == 0) return null;
+                foreach (var f in kf.frames)
+                {
+                    if (f.values == null) continue;
+                    foreach (var kv in f.values) return kv.Key;
+                }
+                return null;
+            }
+
+            // Expand a CSS-style keyframes block into a series of segment
+            // tweens added to the enclosing timeline. Each (channel, gap)
+            // pair becomes one FromTo animate of duration =
+            // (pct_to - pct_from)/100 * blockDuration, positioned at
+            // pct_from/100 * blockDuration from the timeline anchor (default
+            // anchor = current timeline end).
+            //
+            // CSS semantics: a channel that's not redefined at an intermediate
+            // keyframe holds its last defined value. We emit a segment only
+            // between adjacent frames that *both* define the channel; gaps
+            // around missing frames are absorbed by holding the last value
+            // (the engine does this naturally — no segment, no write).
+            //
+            // The block-level `at=` attr (optional) positions the entire
+            // block within the parent timeline. Defaults to End().
+            static void ExpandKeyframesIntoTimeline(VMGTimeline tl, KeyframesStmt kf, Component target)
+            {
+                if (kf.frames == null || kf.frames.Count == 0) return;
+
+                // Block attrs.
+                float blockDuration = 1f;
+                VMGEase blockEase = VMGEase.Linear;
+                bool hasBlockEase = false;
+                VMGAt blockAt = VMGAt.End();
+                int loopCount = 1;
+                bool loopInfinite = false;
+                bool alternate = false;
+                float delay = 0f;
+                if (kf.attrs != null)
+                {
+                    foreach (var kv in kf.attrs)
+                    {
+                        switch (kv.Key)
+                        {
+                            case "duration": if (TryParseFloat(kv.Value, out var d)) blockDuration = Mathf.Max(0.0001f, d); break;
+                            case "ease": blockEase = ResolveEase(kv.Value); hasBlockEase = true; break;
+                            case "at": blockAt = string.IsNullOrEmpty(kv.Value) ? VMGAt.End() : VMGAt.Parse(kv.Value); break;
+                            case "loop":
+                            {
+                                if (string.IsNullOrEmpty(kv.Value) || ParseBool(kv.Value)) loopInfinite = true;
+                                else if (TryParseInt(kv.Value, out var ln)) loopCount = Mathf.Max(1, ln);
+                                break;
+                            }
+                            case "alternate": alternate = ParseFlag(kv.Value); break;
+                            case "delay": if (TryParseFloat(kv.Value, out var dl)) delay = Mathf.Max(0f, dl); break;
+                            default:
+                                Debug.LogWarning($"[VMGFx] unknown keyframes attribute '{kv.Key}'");
+                                break;
+                        }
+                    }
+                }
+
+                // Capture the anchor BEFORE adding any segments. As we add
+                // segments to the timeline its iterationDuration grows, so we
+                // must lock the block's start once and reference it for every
+                // segment instead of re-reading tl.iterationDuration. Without
+                // this, channel-2's segments would land after channel-1's
+                // segments end instead of overlapping in time.
+                float anchorSec;
+                if (blockAt.kind == VMGAt.Kind.Absolute) anchorSec = blockAt.offset;
+                else anchorSec = tl.iterationDuration;
+                anchorSec += delay;
+
+                // Sort frames by pct.
+                kf.frames.Sort((a, b) => a.pct.CompareTo(b.pct));
+
+                // Collect channel set (union of all keys across frames).
+                var channels = new List<string>();
+                var seen = new HashSet<string>();
+                foreach (var f in kf.frames)
+                {
+                    foreach (var kv in f.values)
+                    {
+                        if (seen.Add(kv.Key)) channels.Add(kv.Key);
+                    }
+                }
+
+                // For each channel, walk adjacent frame pairs that BOTH define
+                // it and emit a FromTo segment animate.
+                foreach (var path in channels)
+                {
+                    var channelType = ResolveChannelType(target, path);
+
+                    Keyframe prev = null;
+                    foreach (var cur in kf.frames)
+                    {
+                        if (!cur.values.ContainsKey(path)) continue;
+                        if (prev == null) { prev = cur; continue; }
+
+                        // Emit prev → cur segment.
+                        string fromRaw = prev.values[path];
+                        string toRaw = cur.values[path];
+                        float segStartPct = prev.pct;
+                        float segEndPct = cur.pct;
+                        float segDurationSec = Mathf.Max(0.0001f, (segEndPct - segStartPct) / 100f * blockDuration);
+                        float segStartSec = segStartPct / 100f * blockDuration;
+
+                        var seg = VMGFx.Animate(target);
+                        ApplyTypedFromTo(seg, path, channelType, fromRaw, toRaw);
+                        seg.Duration(segDurationSec);
+                        // Per-segment ease = the *target* (cur) frame's ease
+                        // override if set, else the block ease. Matches CSS's
+                        // "animation-timing-function on a keyframe applies to
+                        // the segment ENDING at that keyframe" rule (anime.js
+                        // does the same).
+                        if (!string.IsNullOrEmpty(cur.easeOverride)) seg.Ease(ResolveEase(cur.easeOverride));
+                        else if (hasBlockEase) seg.Ease(blockEase);
+
+                        // All segments anchor against anchorSec captured at
+                        // function entry. Critical: do NOT re-read
+                        // tl.iterationDuration here — it grows with each Add
+                        // and would push later channels past the first.
+                        tl.Add(seg, VMGAt.Time(anchorSec + segStartSec));
+
+                        prev = cur;
+                    }
+                }
+
+                // Loop / alternate / delay applied to the timeline as a whole
+                // are not safe to set here (would affect *all* children, not
+                // just this block). The DSL surfaces them only on the
+                // enclosing timeline. We warn if user set them on a nested
+                // block.
+                if (loopInfinite || loopCount > 1 || alternate)
+                {
+                    Debug.LogWarning("[VMGFx] keyframes loop/alternate inside a timeline applies to the whole timeline; move them to the timeline header.");
+                    if (loopInfinite) tl.Loop();
+                    else if (loopCount > 1) tl.Loop(loopCount);
+                    if (alternate) tl.Alternate();
+                }
+            }
+
+            // FromTo variant of ApplyTypedTo. Always emits a FromTo for the
+            // given channel type; required by keyframe expansion because each
+            // segment has an explicit from and to.
+            static void ApplyTypedFromTo(VMGAnimate builder, string path, VMGChannelType type, string fromRaw, string toRaw)
+            {
+                switch (type)
+                {
+                    case VMGChannelType.Float:
+                    {
+                        var fromFn = TryParseFloatGenerator(fromRaw);
+                        var toFn = TryParseFloatGenerator(toRaw);
+                        if (fromFn != null || toFn != null)
+                        {
+                            if (fromFn == null && !TryParseFloat(fromRaw, out var fLit)) break;
+                            else if (fromFn == null) { float c = 0f; TryParseFloat(fromRaw, out c); var captured = c; fromFn = () => captured; }
+                            if (toFn == null && !TryParseFloat(toRaw, out var tLit)) break;
+                            else if (toFn == null) { float c = 0f; TryParseFloat(toRaw, out c); var captured = c; toFn = () => captured; }
+                            builder.FromTo(path, fromFn, toFn);
+                            break;
+                        }
+                        if (TryParseFloat(fromRaw, out var ff) && TryParseFloat(toRaw, out var ft)) builder.FromTo(path, ff, ft);
+                        break;
+                    }
+                    case VMGChannelType.Int:
+                    {
+                        var fromFn = TryParseIntGenerator(fromRaw);
+                        var toFn = TryParseIntGenerator(toRaw);
+                        if (fromFn != null || toFn != null)
+                        {
+                            if (fromFn == null && !TryParseInt(fromRaw, out _)) break;
+                            else if (fromFn == null) { int c = 0; TryParseInt(fromRaw, out c); var captured = c; fromFn = () => captured; }
+                            if (toFn == null && !TryParseInt(toRaw, out _)) break;
+                            else if (toFn == null) { int c = 0; TryParseInt(toRaw, out c); var captured = c; toFn = () => captured; }
+                            builder.FromTo(path, fromFn, toFn);
+                            break;
+                        }
+                        if (TryParseInt(fromRaw, out var ifr) && TryParseInt(toRaw, out var it)) builder.FromTo(path, ifr, it);
+                        break;
+                    }
+                    case VMGChannelType.Bool:
+                        builder.FromTo(path, ParseBool(fromRaw), ParseBool(toRaw));
+                        break;
+                    case VMGChannelType.Color:
+                        if (TryParseColor(fromRaw, out var cf) && TryParseColor(toRaw, out var ct)) builder.FromTo(path, cf, ct);
+                        break;
+                    case VMGChannelType.Vector2:
+                        if (TryParseVector2(fromRaw, out var v2f) && TryParseVector2(toRaw, out var v2t)) builder.FromTo(path, v2f, v2t);
+                        break;
+                    case VMGChannelType.Vector3:
+                        if (TryParseVector3(fromRaw, out var v3f) && TryParseVector3(toRaw, out var v3t)) builder.FromTo(path, v3f, v3t);
+                        break;
+                    case VMGChannelType.Vector4:
+                        if (TryParseVector4(fromRaw, out var v4f) && TryParseVector4(toRaw, out var v4t)) builder.FromTo(path, v4f, v4t);
+                        break;
+                }
+            }
+
+            // Resolve an ease attribute value. Accepts:
+            //   - preset name: "outQuad", "linear", "spring"
+            //   - cubicBezier(p1x,p1y,p2x,p2y) — CSS-compatible
+            //   - steps(N) — CSS step ease, mapped to N quantized samples
+            //   - spring(stiffness, damping, mass, velocity) — 1..4 args,
+            //     trailing args default per VMGEase.Spring(); bare `spring`
+            //     keeps working via VMGEase.From below.
+            // Unknown forms fall back to Linear via VMGEase.From, which is
+            // intentional LLM-friendly behaviour.
+            static VMGEase ResolveEase(string raw)
+            {
+                if (string.IsNullOrEmpty(raw)) return VMGEase.Linear;
+                // Function-form: name(arg, arg, ...)
+                int open = raw.IndexOf('(');
+                if (open > 0 && raw[raw.Length - 1] == ')')
+                {
+                    string fname = raw.Substring(0, open);
+                    string args = raw.Substring(open + 1, raw.Length - open - 2);
+                    var parts = SplitTuple(args);
+                    if (fname == "cubicBezier" || fname == "bezier")
+                    {
+                        if (parts.Count >= 4 &&
+                            TryParseFloat(parts[0], out var x1) && TryParseFloat(parts[1], out var y1) &&
+                            TryParseFloat(parts[2], out var x2) && TryParseFloat(parts[3], out var y2))
+                        {
+                            return VMGEase.Bezier(x1, y1, x2, y2);
+                        }
+                        Debug.LogWarning($"[VMGFx] cubicBezier expects 4 numeric args, got '{raw}'");
+                        return VMGEase.Linear;
+                    }
+                    if (fname == "steps")
+                    {
+                        if (parts.Count >= 1 && TryParseInt(parts[0], out var n) && n >= 1)
+                            return BuildStepsEase(n);
+                        Debug.LogWarning($"[VMGFx] steps expects a positive integer, got '{raw}'");
+                        return VMGEase.Linear;
+                    }
+                    if (fname == "spring")
+                    {
+                        // Argument order matches VMGEase.Spring(stiffness,
+                        // damping, mass, velocity). 0..4 positional args;
+                        // missing trailing args take the C# default. Bare
+                        // `spring` keeps working via VMGEase.From below.
+                        // Empty/whitespace-only inside parens collapses to
+                        // "0 args" so `spring( )` == `spring()` == `spring`.
+                        float stiffness = 100f, damping = 10f, mass = 1f, velocity = 0f;
+                        int n = (parts.Count == 1 && string.IsNullOrWhiteSpace(parts[0])) ? 0 : parts.Count;
+                        bool ok = n <= 4;
+                        if (ok && n >= 1) ok &= TryParseFloat(parts[0].Trim(), out stiffness);
+                        if (ok && n >= 2) ok &= TryParseFloat(parts[1].Trim(), out damping);
+                        if (ok && n >= 3) ok &= TryParseFloat(parts[2].Trim(), out mass);
+                        if (ok && n >= 4) ok &= TryParseFloat(parts[3].Trim(), out velocity);
+                        if (ok) return VMGEase.Spring(stiffness, damping, mass, velocity);
+                        Debug.LogWarning($"[VMGFx] spring expects up to 4 numeric args (stiffness, damping, mass, velocity), got '{raw}'");
+                        return VMGEase.Linear;
+                    }
+                }
+                return VMGEase.From(raw);
+            }
+
+            // CSS `steps(N)` collapses to Hold (constant-until-end) for
+            // now — VMGEase has no native staircase curve, and the engine
+            // assumes a continuous tangent pair. N is accepted for forward
+            // compatibility but ignored. A future round can extend VMGEase
+            // with a staircase Kind.
+            static VMGEase BuildStepsEase(int n)
+            {
+                return VMGEase.From(VMGEasingPreset.Hold);
             }
 
             // target syntax:
@@ -853,6 +1824,72 @@ namespace VMG.Animation.Core
                 return primary;
             }
 
+            // motionPath statement → builder.AlongPath(points, closed) plus
+            // optional .AutoRotate(offset). Standard animate-attrs (duration,
+            // ease, delay, endDelay, loop, alternate) are accepted and apply
+            // to the underlying motion path tween. `at` is consumed by
+            // ExtractAt at the caller. Asset-mode binding (`asset=`,
+            // `subShape=`) is deferred to a future DSL round.
+            static void ConfigureMotionPath(VMGAnimate builder, Dictionary<string, string> attrs)
+            {
+                if (attrs == null) { Debug.LogError("[VMGFx] motionPath requires points=x1,y1,...; got no attributes"); return; }
+
+                List<Vector2> pts = null;
+                bool closed = false;
+                if (attrs.TryGetValue("points", out var ptsRaw) && !string.IsNullOrEmpty(ptsRaw))
+                {
+                    var parts = ptsRaw.Split(',');
+                    pts = new List<Vector2>();
+                    for (int i = 0; i + 1 < parts.Length; i += 2)
+                    {
+                        if (TryParseFloat(parts[i], out var x) && TryParseFloat(parts[i + 1], out var y))
+                            pts.Add(new Vector2(x, y));
+                    }
+                }
+                if (attrs.TryGetValue("closed", out var closedRaw)) closed = ParseFlag(closedRaw);
+
+                if (pts == null || pts.Count == 0)
+                {
+                    Debug.LogError("[VMGFx] motionPath requires points=x1,y1,x2,y2,... with at least one point");
+                    return;
+                }
+                builder.AlongPath(pts, closed);
+
+                // autoRotate: bare key = true with offset 0, value =
+                // true/false, value = number → offsetDeg (anime.js parity).
+                if (attrs.TryGetValue("autoRotate", out var arRaw))
+                {
+                    if (string.IsNullOrEmpty(arRaw) || ParseBool(arRaw)) builder.AutoRotate();
+                    else if (TryParseFloat(arRaw, out var deg)) builder.AutoRotate(deg);
+                }
+
+                foreach (var kv in attrs)
+                {
+                    switch (kv.Key)
+                    {
+                        case "duration": if (TryParseFloat(kv.Value, out var dur)) builder.Duration(dur); break;
+                        case "delay": if (TryParseFloat(kv.Value, out var dl)) builder.Delay(dl); break;
+                        case "endDelay": if (TryParseFloat(kv.Value, out var ed)) builder.EndDelay(ed); break;
+                        case "ease": builder.Ease(ResolveEase(kv.Value)); break;
+                        case "loop":
+                        {
+                            if (string.IsNullOrEmpty(kv.Value) || ParseBool(kv.Value)) builder.Loop();
+                            else if (TryParseInt(kv.Value, out var ln)) builder.Loop(ln);
+                            break;
+                        }
+                        case "alternate": builder.Alternate(ParseFlag(kv.Value)); break;
+                        case "points":
+                        case "closed":
+                        case "autoRotate":
+                        case "at":
+                            break; // handled above / by caller
+                        default:
+                            Debug.LogWarning($"[VMGFx] unknown motionPath attribute '{kv.Key}'");
+                            break;
+                    }
+                }
+            }
+
             static void ConfigureAnimate(VMGAnimate builder, string path, string toValue, Dictionary<string, string> attrs, Component target)
             {
                 // Resolve the channel type from the target's field path so we
@@ -870,14 +1907,20 @@ namespace VMG.Animation.Core
                         case "duration": if (TryParseFloat(kv.Value, out var dur)) builder.Duration(dur); break;
                         case "delay": if (TryParseFloat(kv.Value, out var dl)) builder.Delay(dl); break;
                         case "endDelay": if (TryParseFloat(kv.Value, out var ed)) builder.EndDelay(ed); break;
-                        case "ease": builder.Ease(kv.Value); break;
+                        case "ease": builder.Ease(ResolveEase(kv.Value)); break;
                         case "loop":
                         {
                             if (string.IsNullOrEmpty(kv.Value) || ParseBool(kv.Value)) builder.Loop();
                             else if (TryParseInt(kv.Value, out var ln)) builder.Loop(ln);
                             break;
                         }
-                        case "alternate": builder.Alternate(ParseBool(kv.Value)); break;
+                        case "alternate": builder.Alternate(ParseFlag(kv.Value)); break;
+                        case "refreshOnLoop":
+                            // anime.js parity: re-evaluate Func<T> tween values at every
+                            // loop boundary. Bare key (no value) means on; `=true/false`
+                            // gives explicit control.
+                            builder.RefreshOnLoop(ParseFlag(kv.Value));
+                            break;
                         case "at":
                         case "from":
                             break; // handled outside
@@ -910,15 +1953,35 @@ namespace VMG.Animation.Core
                 {
                     case VMGChannelType.Float:
                     {
+                        var toFn = TryParseFloatGenerator(toRaw);
+                        var fromFn = fromRaw != null ? TryParseFloatGenerator(fromRaw) : null;
+                        if (toFn != null)
+                        {
+                            if (fromFn != null) builder.FromTo(path, fromFn, toFn);
+                            else if (fromRaw != null && TryParseFloat(fromRaw, out var fromLit)) builder.FromTo(path, () => fromLit, toFn);
+                            else builder.To(path, toFn);
+                            break;
+                        }
                         if (!TryParseFloat(toRaw, out var to)) return;
-                        if (fromRaw != null && TryParseFloat(fromRaw, out var from)) builder.FromTo(path, from, to);
+                        if (fromFn != null) builder.FromTo(path, fromFn, () => to);
+                        else if (fromRaw != null && TryParseFloat(fromRaw, out var from)) builder.FromTo(path, from, to);
                         else builder.To(path, to);
                         break;
                     }
                     case VMGChannelType.Int:
                     {
+                        var toFn = TryParseIntGenerator(toRaw);
+                        var fromFn = fromRaw != null ? TryParseIntGenerator(fromRaw) : null;
+                        if (toFn != null)
+                        {
+                            if (fromFn != null) builder.FromTo(path, fromFn, toFn);
+                            else if (fromRaw != null && TryParseInt(fromRaw, out var fromLit)) builder.FromTo(path, () => fromLit, toFn);
+                            else builder.To(path, toFn);
+                            break;
+                        }
                         if (!TryParseInt(toRaw, out var to)) return;
-                        if (fromRaw != null && TryParseInt(fromRaw, out var from)) builder.FromTo(path, from, to);
+                        if (fromFn != null) builder.FromTo(path, fromFn, () => to);
+                        else if (fromRaw != null && TryParseInt(fromRaw, out var from)) builder.FromTo(path, from, to);
                         else builder.To(path, to);
                         break;
                     }
@@ -983,6 +2046,94 @@ namespace VMG.Animation.Core
             }
         }
 
+        // ----- Generator helpers (FunctionValue) -----
+
+        // Recognise `random(min, max [, seed])` / `rangeInt(min, max [, seed])`
+        // at a value position and emit a Func<float>/Func<int> that the
+        // builder consumes via VMGAnimate.To(Func<T>) / .FromTo(Func<T>, ...).
+        // Seed is optional; supplying it gives deterministic sequences via a
+        // captured System.Random. Without it the helper falls back to
+        // UnityEngine.Random (global, non-deterministic — matches the
+        // anime.js default).
+        //
+        // `random` returns a continuous float in [min, max].
+        // `rangeInt` returns an integer in [min, max] (inclusive on both
+        // ends — anime.js convention).
+        static Func<float> TryParseFloatGenerator(string raw)
+        {
+            if (!TryParseGenerator(raw, out var fname, out var parts)) return null;
+            if (fname == "random")
+            {
+                if (parts.Count < 2 || parts.Count > 3) { Debug.LogWarning($"[VMGFx] random expects (min, max [, seed]), got '{raw}'"); return null; }
+                if (!TryParseFloat(parts[0].Trim(), out var lo) || !TryParseFloat(parts[1].Trim(), out var hi))
+                { Debug.LogWarning($"[VMGFx] random: non-numeric range in '{raw}'"); return null; }
+                if (parts.Count == 3)
+                {
+                    if (!TryParseInt(parts[2].Trim(), out var seed)) { Debug.LogWarning($"[VMGFx] random seed must be integer, got '{raw}'"); return null; }
+                    var rng = new System.Random(seed);
+                    return () => lo + (float)rng.NextDouble() * (hi - lo);
+                }
+                return () => UnityEngine.Random.Range(lo, hi);
+            }
+            if (fname == "rangeInt")
+            {
+                if (parts.Count < 2 || parts.Count > 3) { Debug.LogWarning($"[VMGFx] rangeInt expects (min, max [, seed]), got '{raw}'"); return null; }
+                if (!TryParseInt(parts[0].Trim(), out var lo) || !TryParseInt(parts[1].Trim(), out var hi))
+                { Debug.LogWarning($"[VMGFx] rangeInt: non-integer range in '{raw}'"); return null; }
+                if (parts.Count == 3)
+                {
+                    if (!TryParseInt(parts[2].Trim(), out var seed)) { Debug.LogWarning($"[VMGFx] rangeInt seed must be integer, got '{raw}'"); return null; }
+                    var rng = new System.Random(seed);
+                    return () => lo + (float)(rng.Next(0, (hi - lo) + 1));
+                }
+                return () => UnityEngine.Random.Range(lo, hi + 1);
+            }
+            return null;
+        }
+
+        static Func<int> TryParseIntGenerator(string raw)
+        {
+            if (!TryParseGenerator(raw, out var fname, out var parts)) return null;
+            if (fname == "rangeInt")
+            {
+                if (parts.Count < 2 || parts.Count > 3) { Debug.LogWarning($"[VMGFx] rangeInt expects (min, max [, seed]), got '{raw}'"); return null; }
+                if (!TryParseInt(parts[0].Trim(), out var lo) || !TryParseInt(parts[1].Trim(), out var hi))
+                { Debug.LogWarning($"[VMGFx] rangeInt: non-integer range in '{raw}'"); return null; }
+                if (parts.Count == 3)
+                {
+                    if (!TryParseInt(parts[2].Trim(), out var seed)) { Debug.LogWarning($"[VMGFx] rangeInt seed must be integer, got '{raw}'"); return null; }
+                    var rng = new System.Random(seed);
+                    return () => lo + rng.Next(0, (hi - lo) + 1);
+                }
+                return () => UnityEngine.Random.Range(lo, hi + 1);
+            }
+            // `random(...)` is also valid on Int channels — truncates the
+            // float result. Useful for non-integer-only fields that happen
+            // to be ints.
+            if (fname == "random")
+            {
+                var ff = TryParseFloatGenerator(raw);
+                if (ff == null) return null;
+                return () => Mathf.RoundToInt(ff());
+            }
+            return null;
+        }
+
+        // Match `name(args)` at value position. Returns false for non-generator
+        // strings so callers fall back to literal parsing.
+        static bool TryParseGenerator(string raw, out string fname, out List<string> parts)
+        {
+            fname = null; parts = null;
+            if (string.IsNullOrEmpty(raw)) return false;
+            int open = raw.IndexOf('(');
+            if (open <= 0 || raw[raw.Length - 1] != ')') return false;
+            fname = raw.Substring(0, open);
+            if (fname != "random" && fname != "rangeInt") return false;
+            string args = raw.Substring(open + 1, raw.Length - open - 2);
+            parts = SplitTuple(args);
+            return true;
+        }
+
         // ----- Value parsing helpers -----
 
         static List<string> SplitTuple(string s)
@@ -1014,6 +2165,11 @@ namespace VMG.Animation.Core
             if (s == "true" || s == "yes" || s == "on" || s == "1") return true;
             return false;
         }
+
+        // Flag-style attr: bare key (empty value) means "on"; explicit
+        // `=true/false/yes/...` honoured. Used by attrs the user can write
+        // either as `alternate` or `alternate=false`.
+        static bool ParseFlag(string s) => string.IsNullOrEmpty(s) || ParseBool(s);
 
         static bool TryParseVector2(string s, out Vector2 v)
         {

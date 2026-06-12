@@ -39,15 +39,22 @@ namespace VMG.Tween
 
         public static Tweener DOSize(this VectorSpriteRenderer r, Vector2 endValue, float duration)
         {
-            return DOTween.To(() => r.ShapeStack.m_Slot0.shape.size,
-                              v => r.ShapeStack.m_Slot0.shape.size = v,
+            return DOTween.To(() => r.ShapeStack.Slot0.shape.size,
+                              v => r.ShapeStack.Slot0.shape.size = v,
                               endValue, duration).SetTarget(r);
         }
 
         public static Tweener DOCornerRadius(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            return DOTween.To(() => r.ShapeStack.m_Slot0.shape.cornerRadius,
-                              v => r.ShapeStack.m_Slot0.shape.cornerRadius = v,
+            return DOTween.To(() => r.ShapeStack.Slot0.shape.cornerRadii,
+                              v => r.ShapeStack.Slot0.shape.cornerRadii = v,
+                              new Vector2(endValue, endValue), duration).SetTarget(r);
+        }
+
+        public static Tweener DOCornerRadii(this VectorSpriteRenderer r, Vector2 endValue, float duration)
+        {
+            return DOTween.To(() => r.ShapeStack.Slot0.shape.cornerRadii,
+                              v => r.ShapeStack.Slot0.shape.cornerRadii = v,
                               endValue, duration).SetTarget(r);
         }
 
@@ -68,26 +75,26 @@ namespace VMG.Tween
 
         public static Tweener DOTrim(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            r.TrimModifier.enabled = true;
-            return DOTween.To(() => r.TrimModifier.end, v => r.TrimModifier.end = v, endValue, duration).SetTarget(r);
+            r.Trim.enabled = true;
+            return DOTween.To(() => r.Trim.end, v => r.Trim.end = v, endValue, duration).SetTarget(r);
         }
 
         public static Tweener DOTrimStart(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            r.TrimModifier.enabled = true;
-            return DOTween.To(() => r.TrimModifier.start, v => r.TrimModifier.start = v, endValue, duration).SetTarget(r);
+            r.Trim.enabled = true;
+            return DOTween.To(() => r.Trim.start, v => r.Trim.start = v, endValue, duration).SetTarget(r);
         }
 
         public static Tweener DOTrimOffset(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            r.TrimModifier.enabled = true;
-            return DOTween.To(() => r.TrimModifier.offset, v => r.TrimModifier.offset = v, endValue, duration).SetTarget(r);
+            r.Trim.enabled = true;
+            return DOTween.To(() => r.Trim.offset, v => r.Trim.offset = v, endValue, duration).SetTarget(r);
         }
 
         public static Tweener DORoundness(this VectorSpriteRenderer r, float endValue, float duration)
         {
-            r.RoundCornerModifier.enabled = true;
-            return DOTween.To(() => r.RoundCornerModifier.radius, v => r.RoundCornerModifier.radius = v, endValue, duration).SetTarget(r);
+            r.RoundCorners.enabled = true;
+            return DOTween.To(() => r.RoundCorners.radius, v => r.RoundCorners.radius = v, endValue, duration).SetTarget(r);
         }
     }
 }

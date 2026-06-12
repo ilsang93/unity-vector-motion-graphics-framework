@@ -160,11 +160,11 @@ namespace VMG.EditorTools
             Handles.color = prev;
         }
 
-        // Slot field naming convention: m_Node00 .. m_Node63. Matches the
+        // Slot field naming convention: Node00 .. Node63. Matches the
         // hand-flattened field layout in PrimitiveShapeSource.
         private static string SlotName(int i)
         {
-            return i < 10 ? "m_Node0" + i : "m_Node" + i;
+            return i < 10 ? "Node0" + i : "Node" + i;
         }
 
         /// SceneView overlay that lets the user pick which ShapeStack

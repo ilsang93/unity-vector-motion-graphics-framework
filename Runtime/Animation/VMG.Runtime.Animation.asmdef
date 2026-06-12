@@ -4,7 +4,8 @@
     "references": [
         "VMG.Runtime",
         "VMG.Runtime.UI",
-        "VMG.Runtime.World"
+        "VMG.Runtime.World",
+        "VMG.Runtime.Svg"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

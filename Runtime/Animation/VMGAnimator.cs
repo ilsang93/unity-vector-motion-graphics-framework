@@ -25,6 +25,12 @@ namespace VMG.Animation
         [Tooltip("If true, External mode also fires events when progress sweeps over them. Off by default because External progress can jump.")]
         public bool fireEventsInExternalMode;
 
+        [Tooltip("If true, call Play() at runtime OnEnable. No effect in Edit mode or External play mode.")]
+        public bool playOnEnable;
+
+        [Tooltip("If true, loop playback in script mode (progress wraps 1→0). Clip mode uses VMGAnimationClip.loop instead. Has no effect in External mode.")]
+        public bool loopScript;
+
         public bool IsReady { get; private set; }
         public event Action ReadyChanged;
 
@@ -58,6 +64,12 @@ namespace VMG.Animation
         void OnEnable()
         {
             EnsureCompiled();
+            if (playOnEnable && Application.isPlaying && mode == VMGPlayMode.Internal)
+            {
+                progress = 0f;
+                m_HasLastProgress = false;
+                Play();
+            }
         }
 
         void OnDisable()
@@ -129,7 +141,7 @@ namespace VMG.Animation
             float next = progress + delta;
             bool cycleCompleted = false;
 
-            bool loop = m_ScriptModeActive ? false : (clip != null && clip.loop);
+            bool loop = m_ScriptModeActive ? loopScript : (clip != null && clip.loop);
 
             if (next >= 1f)
             {

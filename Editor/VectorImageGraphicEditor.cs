@@ -24,14 +24,14 @@ namespace VMG.EditorTools
         protected override void OnEnable()
         {
             base.OnEnable();
-            m_SvgAsset = serializedObject.FindProperty("m_SvgAsset");
-            m_ShapeStack = serializedObject.FindProperty("m_ShapeStack");
-            m_Stroke = serializedObject.FindProperty("m_Stroke");
-            m_Fill = serializedObject.FindProperty("m_Fill");
-            m_RoundCorners = serializedObject.FindProperty("m_RoundCorners");
-            m_Trim = serializedObject.FindProperty("m_Trim");
-            m_FitToRect = serializedObject.FindProperty("m_FitToRect");
-            m_Texture = serializedObject.FindProperty("m_Texture");
+            m_SvgAsset = serializedObject.FindProperty("SvgAsset");
+            m_ShapeStack = serializedObject.FindProperty("ShapeStack");
+            m_Stroke = serializedObject.FindProperty("Stroke");
+            m_Fill = serializedObject.FindProperty("Fill");
+            m_RoundCorners = serializedObject.FindProperty("RoundCorners");
+            m_Trim = serializedObject.FindProperty("Trim");
+            m_FitToRect = serializedObject.FindProperty("FitToRect");
+            m_Texture = serializedObject.FindProperty("Texture");
         }
 
         public override void OnInspectorGUI()
@@ -72,7 +72,7 @@ namespace VMG.EditorTools
             var graphic = (VectorImageGraphic)target;
             var so = new SerializedObject(graphic);
 
-            if (so.FindProperty("m_SvgAsset").objectReferenceValue != null) return;
+            if (so.FindProperty("SvgAsset").objectReferenceValue != null) return;
 
             var stack = graphic.ShapeStack;
             m_ActiveSlot = FreePathSceneHandles.DrawSlotOverlay(m_ActiveSlot, ref stack);
@@ -81,7 +81,7 @@ namespace VMG.EditorTools
             // a multi-slot blend without switching the overlay back and forth.
             FreePathSceneHandles.DrawInactiveSlotGuides(graphic.rectTransform, ref stack, m_ActiveSlot);
 
-            string shapePath = "m_ShapeStack.m_Slot" + m_ActiveSlot + ".shape";
+            string shapePath = "ShapeStack.Slot" + m_ActiveSlot + ".shape";
             var slot = stack.GetSlot(m_ActiveSlot);
 
             if (slot.shape.kind != ShapeKind.FreePath) return;

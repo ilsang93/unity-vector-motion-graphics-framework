@@ -118,6 +118,18 @@ namespace VMG.Animation.Core
             return this;
         }
 
+        // Overload taking a constructed VMGEase. Used by the DSL header where
+        // ease can be a preset name, cubicBezier(...), steps(N), or spring —
+        // all of which produce a VMGEase rather than a preset enum.
+        public VMGTimeline Defaults(VMGEase ease, float duration = -1f, float delay = -1f)
+        {
+            if (duration >= 0f) m_DefaultDuration = duration;
+            if (delay >= 0f) m_DefaultDelay = delay;
+            m_DefaultEase = ease;
+            m_HasDefaultEase = true;
+            return this;
+        }
+
         public VMGTimeline Loop() { EnsureFinalized(); iterationCount = float.PositiveInfinity; return this; }
         public VMGTimeline Loop(int count) { EnsureFinalized(); iterationCount = Mathf.Max(1, count); return this; }
         public VMGTimeline LoopDelay(float seconds) { EnsureFinalized(); loopDelay = Mathf.Max(0f, seconds); return this; }
@@ -248,6 +260,59 @@ namespace VMG.Animation.Core
                 c.anim?.Refresh();
                 if (c.timer is VMGTimeline nested) nested.Refresh();
             }
+            return this;
+        }
+
+        // Restore every channel every child has written to back to its
+        // pre-animation value. anime.js's revert(): snap-back (not animated)
+        // and stop. Distinct from Reverse() which flips direction and keeps
+        // playing.
+        //
+        // Children are reverted in REVERSE order so when multiple children
+        // wrote to the same (target, path), the last writer is undone first,
+        // restoring the value the previous writer would have seen — then
+        // that previous writer is undone, ultimately reaching the
+        // before-anything state.
+        public VMGTimeline Revert() => EndAndClearChildren(restoreBaseline: true);
+
+        // Stop every child at its current channel value and clear tween flags
+        // so a follow-up animate can recapture from here. Symmetric with
+        // VMGAnimation.Cancel — see that method for the toggle/re-press
+        // motivation. Children are walked in reverse (same composition rule
+        // as Revert) but baseline writes are skipped.
+        public VMGTimeline Cancel() => EndAndClearChildren(restoreBaseline: false);
+
+        VMGTimeline EndAndClearChildren(bool restoreBaseline)
+        {
+            EnsureFinalized();
+            for (int i = m_Children.Count - 1; i >= 0; i--)
+            {
+                var c = m_Children[i];
+                if (c.anim != null)
+                {
+                    if (restoreBaseline) c.anim.Revert();
+                    else c.anim.Cancel();
+                }
+                if (c.timer is VMGTimeline nested)
+                {
+                    if (restoreBaseline) nested.Revert();
+                    else nested.Cancel();
+                }
+            }
+            // Same trick as VMGAnimation.Revert: skip base.Stop's Seek-to-0
+            // because re-rendering at t=0 would dispatch into children and
+            // overwrite the freshly restored channel values via their own
+            // tween outputs at iterationTime=0.
+            paused = true;
+            m_CurrentTime = -startDelay;
+            m_IterationTime = 0f;
+            m_CurrentIteration = 0;
+            began = false;
+            completed = false;
+            m_PrevIterationTime = -1f;
+            m_HasPrevIterationTime = false;
+            if (m_CompletionSource != null && m_CompletionSource.Task.IsCompleted)
+                m_CompletionSource = null;
             return this;
         }
 

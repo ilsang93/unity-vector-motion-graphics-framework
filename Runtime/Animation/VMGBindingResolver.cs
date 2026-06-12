@@ -91,7 +91,7 @@ namespace VMG.Animation
                 return false;
             }
 
-            var writer = new VMGChannelWriter(component, path, track.type);
+            var writer = new VMGChannelWriter(component, path, track.type, track.binding.fieldPath);
             if (!writer.IsTypeCompatible(out var typeError))
             {
                 Debug.LogError($"[VMG.Animation] {typeError} (path '{track.binding.fieldPath}')");

@@ -4,7 +4,7 @@ using UnityEngine;
 namespace VMG.Core
 {
     /// AnimationClip-friendly flattened equivalent of VectorNode. Used by
-    /// PrimitiveShapeSource as 64 individual fields (m_Node00..m_Node63)
+    /// PrimitiveShapeSource as 64 individual fields (Node00..Node63)
     /// because Unity's Animation window exposes named struct fields but
     /// not List<T> or T[] element fields. Each field of this struct
     /// (position.x, inTangent.y, ...) becomes a keyframable channel.

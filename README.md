@@ -6,7 +6,7 @@ Procedural vector motion graphics runtime for Unity. Built for AE-style shape-la
 expressiveness with first-class Unity Animator / Timeline integration on both UGUI
 and world-space renderers.
 
-## Features (0.11.0)
+## Features (0.26.0)
 
 - Path + Node data model with cubic Bezier (`inTangent` / `outTangent` per node), tessellated upstream of every modifier
 - Procedural CPU mesh generation
@@ -86,6 +86,42 @@ The integration adds no hard dependency to the core package — projects
 without DOTween are unaffected. See `Samples~/TweenIntegration/README.md`
 for the full surface.
 
+## Standalone animation (VMGAnimator)
+
+Beyond Unity's AnimationClip / Timeline path below, VMG ships its own
+self-contained animator that doesn't require `PlayableDirector` or
+Unity Timeline. Three authoring surfaces, all driving the same engine:
+
+- **`VMGAnimationClip` + VMGAnimator** — ScriptableObject clip
+  asset, edited in a dedicated timeline window. Per-track keys with
+  ease, multi-target, events, baseline restore.
+- **Code API (anime.js-style fluent builders)** —
+  `VMGFx.Animate(target).To(...).Duration(...).Ease(...).Play()`,
+  `VMGFx.Timeline()` for sequencing with relative positions
+  (`"+=0.2"`, `"<"`, `"-=F"`), `VMGFx.Stagger(targets, ...)` for
+  per-target offset, spring / motion-path / function-value channels.
+- **`.vmgfx` DSL** — plain-text script (`add`, `animate`, `timeline`,
+  `keyframes`, `stagger`, …) that compiles to the same engine.
+  Assign a `.vmgfx` (or any TextAsset) to `VMGAnimator.script` and
+  the hierarchy builds on enable. Optional `playOnEnable` /
+  `loopScript` toggles for one-shot vs. infinite playback.
+
+### CSS `@keyframes` importer
+
+`VMG.Animation.Serialization.VMGCssKeyframes.Translate(css, out warnings)`
+turns a self-contained CSS keyframe animation into `.vmgfx` text.
+Designed for AE / Figma / Bodymovin CSS exports — `transform`,
+`opacity`, color / border channels with W3C-spec cubic-bezier easing
+mapping. Editor entry points:
+
+- `Tools ▸ VMG ▸ Import CSS @keyframes…` — file dialog
+- `Tools ▸ VMG ▸ CSS → VMGFx Window` — paste-in window
+
+Out of scope by design: HTML companion input, CSS cascade, pseudo-class
+state, per-element custom-property stagger. Trim wild demos to the
+`@keyframes` core before importing; re-express element-level effects
+via `VMGFx.Stagger` and timeline states.
+
 ## Animation support
 
 VMG's design goal is "every parameter you can edit in the inspector you
@@ -99,27 +135,27 @@ Every inspector field is exposed as a struct member so the Animation
 window's "Add Property" tree walks into it. The full surface:
 
 - **ShapeStack** — `resampleCount`, plus four slots:
-  - `m_Slot0..m_Slot3.intensity` — weight in the blend (0 = inactive)
-  - `m_Slot0..m_Slot3.shape.*` — full PrimitiveShapeSource surface
+  - `Slot0..Slot3.intensity` — weight in the blend (0 = inactive)
+  - `Slot0..Slot3.shape.*` — full PrimitiveShapeSource surface
 - **Procedural shape (per slot)** — `kind`, `center.x/y`, `size.x/y`,
-  `sides`, `cornerRadius`, `circleSegments`, `bezierSamplesPerSegment`,
+  `sides`, `cornerRadii.x/y`, `circleSegments`, `bezierSamplesPerSegment`,
   `freeClosed`, `activeNodeCount`
-- **FreePath nodes (per slot)** — per-flat-slot `m_Node00.position.x/y`,
-  `m_Node00.inTangent.x/y`, `m_Node00.outTangent.x/y`, `m_Node00.type`
-  ... up to `m_Node63`. Bind them in the Animation window or just drag
+- **FreePath nodes (per slot)** — per-flat-slot `Node00.position.x/y`,
+  `Node00.inTangent.x/y`, `Node00.outTangent.x/y`, `Node00.type`
+  ... up to `Node63`. Bind them in the Animation window or just drag
   handles in the SceneView while Record is on — each drag becomes a
   keyframe at the playhead.
 - **Stroke** — `enabled`, `color.rgba`, `width`, `alignment`, `cap`,
   `join`, `miterLimit`
 - **Fill** — `enabled`, `color.rgba`
-- **Modifiers** — every `[SerializeField]` field on `RoundCornerModifier`
+- **Modifiers** — every serialized field on `RoundCornerModifier`
   and `TrimPathModifier` (including their `enabled` flag, so a modifier
   can be toggled on/off mid-clip)
 - **UGUI renderer** — `FitToRect`, `Graphic.color`
 - **World renderer** — `Tint`, `SvgUnitsPerWorldUnit`, `SortingLayerID`,
   `SortingOrder`
-- **Depth (world renderer only)** — `m_Depth.enabled`,
-  `m_Depth.thickness`, `m_Depth.alignment`
+- **Depth (world renderer only)** — `Depth.enabled`,
+  `Depth.thickness`, `Depth.alignment`
 
 ### Multi-shape blending
 
@@ -127,7 +163,7 @@ The ShapeStack replaces the old PathMorphModifier:
 
 1. Put your "from" shape in slot 0 (intensity 1).
 2. Put your "to" shape in slot 1 (intensity 0).
-3. Keyframe `m_Slot1.intensity` from 0 → 1 — the renderer
+3. Keyframe `Slot1.intensity` from 0 → 1 — the renderer
    arc-length-resamples both paths and lerps index-by-index.
 4. Optionally fade slot 0 out in parallel so the result is the pure
    destination at the end of the clip.

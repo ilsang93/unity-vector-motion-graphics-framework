@@ -9,6 +9,12 @@ namespace VMG.Animation.Core
         public float startTime;
         public float endTime;
 
+        // Back-pointer used by code-driven tweens to register revert
+        // baselines on first Evaluate. Set when the tween is added to an
+        // animation's list. Null for clip-driven tweens (clip data is the
+        // baseline — Revert on clip tweens is a no-op by design).
+        public VMGAnimation owner;
+
         public abstract void Evaluate(float iterationTime);
     }
 }

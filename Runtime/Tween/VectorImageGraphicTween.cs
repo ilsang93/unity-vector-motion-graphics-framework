@@ -18,7 +18,7 @@ namespace VMG.Tween
     /// The "Shape" tweens here target slot 0 of the ShapeStack — that's
     /// the slot that holds the renderer's "primary" shape in a freshly
     /// created renderer. For tweens targeting other slots, use
-    /// DOSlotIntensity or just write to `g.ShapeStack.m_SlotN.shape.*`
+    /// DOSlotIntensity or just write to `g.ShapeStack.SlotN.shape.*`
     /// directly inside a DOTween.To setter.
     public static class VectorImageGraphicTween
     {
@@ -53,15 +53,22 @@ namespace VMG.Tween
 
         public static Tweener DOSize(this VectorImageGraphic g, Vector2 endValue, float duration)
         {
-            return DOTween.To(() => g.ShapeStack.m_Slot0.shape.size,
-                              v => g.ShapeStack.m_Slot0.shape.size = v,
+            return DOTween.To(() => g.ShapeStack.Slot0.shape.size,
+                              v => g.ShapeStack.Slot0.shape.size = v,
                               endValue, duration).SetTarget(g);
         }
 
         public static Tweener DOCornerRadius(this VectorImageGraphic g, float endValue, float duration)
         {
-            return DOTween.To(() => g.ShapeStack.m_Slot0.shape.cornerRadius,
-                              v => g.ShapeStack.m_Slot0.shape.cornerRadius = v,
+            return DOTween.To(() => g.ShapeStack.Slot0.shape.cornerRadii,
+                              v => g.ShapeStack.Slot0.shape.cornerRadii = v,
+                              new Vector2(endValue, endValue), duration).SetTarget(g);
+        }
+
+        public static Tweener DOCornerRadii(this VectorImageGraphic g, Vector2 endValue, float duration)
+        {
+            return DOTween.To(() => g.ShapeStack.Slot0.shape.cornerRadii,
+                              v => g.ShapeStack.Slot0.shape.cornerRadii = v,
                               endValue, duration).SetTarget(g);
         }
 
@@ -85,32 +92,31 @@ namespace VMG.Tween
 
         // -- Modifiers ----------------------------------------------------
 
-        // Modifiers are structs, so each lambda reaches through
-        // `g.XModifier` every call to land the write on the real field
-        // (the ref-returning property forwards it).
+        // Modifiers are structs exposed as public fields; lambda captures
+        // operate on the field in place.
 
         public static Tweener DOTrim(this VectorImageGraphic g, float endValue, float duration)
         {
-            g.TrimModifier.enabled = true;
-            return DOTween.To(() => g.TrimModifier.end, v => g.TrimModifier.end = v, endValue, duration).SetTarget(g);
+            g.Trim.enabled = true;
+            return DOTween.To(() => g.Trim.end, v => g.Trim.end = v, endValue, duration).SetTarget(g);
         }
 
         public static Tweener DOTrimStart(this VectorImageGraphic g, float endValue, float duration)
         {
-            g.TrimModifier.enabled = true;
-            return DOTween.To(() => g.TrimModifier.start, v => g.TrimModifier.start = v, endValue, duration).SetTarget(g);
+            g.Trim.enabled = true;
+            return DOTween.To(() => g.Trim.start, v => g.Trim.start = v, endValue, duration).SetTarget(g);
         }
 
         public static Tweener DOTrimOffset(this VectorImageGraphic g, float endValue, float duration)
         {
-            g.TrimModifier.enabled = true;
-            return DOTween.To(() => g.TrimModifier.offset, v => g.TrimModifier.offset = v, endValue, duration).SetTarget(g);
+            g.Trim.enabled = true;
+            return DOTween.To(() => g.Trim.offset, v => g.Trim.offset = v, endValue, duration).SetTarget(g);
         }
 
         public static Tweener DORoundness(this VectorImageGraphic g, float endValue, float duration)
         {
-            g.RoundCornerModifier.enabled = true;
-            return DOTween.To(() => g.RoundCornerModifier.radius, v => g.RoundCornerModifier.radius = v, endValue, duration).SetTarget(g);
+            g.RoundCorners.enabled = true;
+            return DOTween.To(() => g.RoundCorners.radius, v => g.RoundCorners.radius = v, endValue, duration).SetTarget(g);
         }
     }
 }

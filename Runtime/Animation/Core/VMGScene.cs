@@ -182,8 +182,8 @@ namespace VMG.Animation.Core
             ApplyShapeStack(ref g.ShapeStack, d);
             g.Fill = d.m_Fill;
             g.Stroke = d.m_Stroke;
-            g.RoundCornerModifier = d.m_RoundCorners;
-            g.TrimModifier = d.m_Trim;
+            g.RoundCorners = d.m_RoundCorners;
+            g.Trim = d.m_Trim;
 
             var rt = go.transform as RectTransform;
             if (rt != null)
@@ -203,8 +203,8 @@ namespace VMG.Animation.Core
             ApplyShapeStack(ref r.ShapeStack, d);
             r.Fill = d.m_Fill;
             r.Stroke = d.m_Stroke;
-            r.RoundCornerModifier = d.m_RoundCorners;
-            r.TrimModifier = d.m_Trim;
+            r.RoundCorners = d.m_RoundCorners;
+            r.Trim = d.m_Trim;
 
             go.transform.localPosition = new Vector3(d.m_Position.x, d.m_Position.y, go.transform.localPosition.z);
         }
@@ -218,17 +218,17 @@ namespace VMG.Animation.Core
         // explicitly set them via .Slot(i, ...).
         static void ApplyShapeStack(ref ShapeStack stack, VMGShapeDescriptor d)
         {
-            stack.m_Slot0 = new ShapeSlot
+            stack.Slot0 = new ShapeSlot
             {
                 shape = d.m_Slot0Shape,
                 intensity = d.m_Slot0Intensity,
             };
             if (d.m_Slot1Shape.HasValue)
-                stack.m_Slot1 = new ShapeSlot { shape = d.m_Slot1Shape.Value, intensity = d.m_Slot1Intensity };
+                stack.Slot1 = new ShapeSlot { shape = d.m_Slot1Shape.Value, intensity = d.m_Slot1Intensity };
             if (d.m_Slot2Shape.HasValue)
-                stack.m_Slot2 = new ShapeSlot { shape = d.m_Slot2Shape.Value, intensity = d.m_Slot2Intensity };
+                stack.Slot2 = new ShapeSlot { shape = d.m_Slot2Shape.Value, intensity = d.m_Slot2Intensity };
             if (d.m_Slot3Shape.HasValue)
-                stack.m_Slot3 = new ShapeSlot { shape = d.m_Slot3Shape.Value, intensity = d.m_Slot3Intensity };
+                stack.Slot3 = new ShapeSlot { shape = d.m_Slot3Shape.Value, intensity = d.m_Slot3Intensity };
         }
     }
 }

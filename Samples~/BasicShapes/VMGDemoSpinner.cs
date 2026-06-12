@@ -23,7 +23,7 @@ namespace VMG.Samples
             // mutations below need to land on the renderer's actual
             // field (not a copy). `ref var ... = ref ...` keeps the
             // reference semantics through the assignment.
-            ref var trim = ref m_Target.TrimModifier;
+            ref var trim = ref m_Target.Trim;
             trim.enabled = true;
             trim.offset = (Time.time * speed) % 1f;
             trim.start = 0f;

@@ -28,11 +28,24 @@ namespace VMG.Animation.Core
 
         // Per-shape sugar that also flips the shared modifier so the rounded
         // rect actually looks rounded with one call. RoundCorner() from the
-        // base sets the corner modifier; CornerRadius() sets the shape's
-        // own cornerRadius field (the one Polygon doesn't use).
+        // base sets the corner modifier; CornerRadius()/CornerRadii() sets
+        // the shape's own cornerRadii field (the one Polygon doesn't use).
         public VMGRoundedRectangleDescriptor CornerRadius(float radius)
         {
-            m_Slot0Shape.cornerRadius = radius;
+            m_Slot0Shape.cornerRadii = new Vector2(radius, radius);
+            return this;
+        }
+
+        // X/Y elliptical corner radii (CSS `border-radius: Xpx / Ypx`).
+        public VMGRoundedRectangleDescriptor CornerRadii(float rx, float ry)
+        {
+            m_Slot0Shape.cornerRadii = new Vector2(rx, ry);
+            return this;
+        }
+
+        public VMGRoundedRectangleDescriptor CornerRadii(Vector2 radii)
+        {
+            m_Slot0Shape.cornerRadii = radii;
             return this;
         }
     }

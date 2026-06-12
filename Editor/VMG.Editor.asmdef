@@ -6,6 +6,7 @@
         "VMG.Runtime.UI",
         "VMG.Runtime.World",
         "VMG.Runtime.Svg",
+        "VMG.Runtime.Animation",
         "UnityEngine.UI",
         "UnityEditor.UI"
     ],

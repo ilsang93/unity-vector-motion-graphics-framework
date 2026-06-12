@@ -8,13 +8,15 @@ namespace VMG.Animation
         readonly UnityEngine.Object m_Target;
         readonly VMGCompiledPath m_Path;
         readonly VMGChannelType m_Type;
+        readonly string m_FieldPath;
         readonly object[] m_BoxStack;
 
-        public VMGChannelWriter(UnityEngine.Object target, VMGCompiledPath path, VMGChannelType type)
+        public VMGChannelWriter(UnityEngine.Object target, VMGCompiledPath path, VMGChannelType type, string fieldPath = null)
         {
             m_Target = target;
             m_Path = path;
             m_Type = type;
+            m_FieldPath = fieldPath;
             m_BoxStack = new object[path.segments.Length];
         }
 
@@ -22,6 +24,15 @@ namespace VMG.Animation
         // particular component. Object reference equality is enough — writers
         // are constructed with a concrete Component instance.
         public bool TargetEquals(UnityEngine.Object other) => ReferenceEquals(m_Target, other);
+
+        // Revert baseline keying: (target instance ID, field path) identifies
+        // a single (target, channel) slot regardless of how many writers point
+        // to it. The TargetInstanceID dies with the UnityEngine.Object so the
+        // key naturally collapses when the host is destroyed.
+        public int TargetInstanceID => m_Target != null ? m_Target.GetInstanceID() : 0;
+        public string FieldPath => m_FieldPath;
+        public VMGChannelType ChannelType => m_Type;
+        public UnityEngine.Object TargetObject => m_Target;
 
         public bool IsTypeCompatible(out string error)
         {

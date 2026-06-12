@@ -17,7 +17,7 @@ namespace VMG.Core
     ///     defaults are applied lazily via Normalize() on first Build().
     ///
     /// FreePath node storage: 64 individual FlatNode fields
-    /// (m_Node00..m_Node63) plus activeNodeCount. Unity exposes named
+    /// (Node00..Node63) plus activeNodeCount. Unity exposes named
     /// struct fields to the Animation window's Add Property tree but
     /// NOT List<T> or T[] element fields, so a flat layout is the only
     /// way to make per-node values keyframable. Reorder is unsupported;
@@ -42,9 +42,8 @@ namespace VMG.Core
         public int sides;
 
         // RoundedRect
-        [Min(0f)]
-        [Tooltip("Corner radius for RoundedRectangle. Keyframable.")]
-        public float cornerRadius;
+        [Tooltip("Corner radii (x = horizontal, y = vertical) for RoundedRectangle. Set x and y differently for elliptical corners (CSS `border-radius: Xpx / Ypx`). Keyframable.")]
+        public Vector2 cornerRadii;
 
         // Tessellation density for curved primitives.
         [Range(8, 256)]
@@ -70,25 +69,25 @@ namespace VMG.Core
         public List<VectorNode> freeNodesLegacy;
 
         // 64 flat node slots. Each is a [Serializable] struct field, so
-        // Animation window surfaces m_Node00.position.x, .inTangent.y,
+        // Animation window surfaces Node00.position.x, .inTangent.y,
         // etc. as keyframable channels. The repetition is the price for
         // Unity's "no list-element keyframes" constraint.
-        public FlatNode m_Node00; public FlatNode m_Node01; public FlatNode m_Node02; public FlatNode m_Node03;
-        public FlatNode m_Node04; public FlatNode m_Node05; public FlatNode m_Node06; public FlatNode m_Node07;
-        public FlatNode m_Node08; public FlatNode m_Node09; public FlatNode m_Node10; public FlatNode m_Node11;
-        public FlatNode m_Node12; public FlatNode m_Node13; public FlatNode m_Node14; public FlatNode m_Node15;
-        public FlatNode m_Node16; public FlatNode m_Node17; public FlatNode m_Node18; public FlatNode m_Node19;
-        public FlatNode m_Node20; public FlatNode m_Node21; public FlatNode m_Node22; public FlatNode m_Node23;
-        public FlatNode m_Node24; public FlatNode m_Node25; public FlatNode m_Node26; public FlatNode m_Node27;
-        public FlatNode m_Node28; public FlatNode m_Node29; public FlatNode m_Node30; public FlatNode m_Node31;
-        public FlatNode m_Node32; public FlatNode m_Node33; public FlatNode m_Node34; public FlatNode m_Node35;
-        public FlatNode m_Node36; public FlatNode m_Node37; public FlatNode m_Node38; public FlatNode m_Node39;
-        public FlatNode m_Node40; public FlatNode m_Node41; public FlatNode m_Node42; public FlatNode m_Node43;
-        public FlatNode m_Node44; public FlatNode m_Node45; public FlatNode m_Node46; public FlatNode m_Node47;
-        public FlatNode m_Node48; public FlatNode m_Node49; public FlatNode m_Node50; public FlatNode m_Node51;
-        public FlatNode m_Node52; public FlatNode m_Node53; public FlatNode m_Node54; public FlatNode m_Node55;
-        public FlatNode m_Node56; public FlatNode m_Node57; public FlatNode m_Node58; public FlatNode m_Node59;
-        public FlatNode m_Node60; public FlatNode m_Node61; public FlatNode m_Node62; public FlatNode m_Node63;
+        public FlatNode Node00; public FlatNode Node01; public FlatNode Node02; public FlatNode Node03;
+        public FlatNode Node04; public FlatNode Node05; public FlatNode Node06; public FlatNode Node07;
+        public FlatNode Node08; public FlatNode Node09; public FlatNode Node10; public FlatNode Node11;
+        public FlatNode Node12; public FlatNode Node13; public FlatNode Node14; public FlatNode Node15;
+        public FlatNode Node16; public FlatNode Node17; public FlatNode Node18; public FlatNode Node19;
+        public FlatNode Node20; public FlatNode Node21; public FlatNode Node22; public FlatNode Node23;
+        public FlatNode Node24; public FlatNode Node25; public FlatNode Node26; public FlatNode Node27;
+        public FlatNode Node28; public FlatNode Node29; public FlatNode Node30; public FlatNode Node31;
+        public FlatNode Node32; public FlatNode Node33; public FlatNode Node34; public FlatNode Node35;
+        public FlatNode Node36; public FlatNode Node37; public FlatNode Node38; public FlatNode Node39;
+        public FlatNode Node40; public FlatNode Node41; public FlatNode Node42; public FlatNode Node43;
+        public FlatNode Node44; public FlatNode Node45; public FlatNode Node46; public FlatNode Node47;
+        public FlatNode Node48; public FlatNode Node49; public FlatNode Node50; public FlatNode Node51;
+        public FlatNode Node52; public FlatNode Node53; public FlatNode Node54; public FlatNode Node55;
+        public FlatNode Node56; public FlatNode Node57; public FlatNode Node58; public FlatNode Node59;
+        public FlatNode Node60; public FlatNode Node61; public FlatNode Node62; public FlatNode Node63;
 
         // Shared scratch buffer for BuildFree. Calls are main-thread
         // and sequential (the modifier stack runs `target.Build` AFTER
@@ -135,22 +134,22 @@ namespace VMG.Core
         {
             switch (i)
             {
-                case  0: return m_Node00; case  1: return m_Node01; case  2: return m_Node02; case  3: return m_Node03;
-                case  4: return m_Node04; case  5: return m_Node05; case  6: return m_Node06; case  7: return m_Node07;
-                case  8: return m_Node08; case  9: return m_Node09; case 10: return m_Node10; case 11: return m_Node11;
-                case 12: return m_Node12; case 13: return m_Node13; case 14: return m_Node14; case 15: return m_Node15;
-                case 16: return m_Node16; case 17: return m_Node17; case 18: return m_Node18; case 19: return m_Node19;
-                case 20: return m_Node20; case 21: return m_Node21; case 22: return m_Node22; case 23: return m_Node23;
-                case 24: return m_Node24; case 25: return m_Node25; case 26: return m_Node26; case 27: return m_Node27;
-                case 28: return m_Node28; case 29: return m_Node29; case 30: return m_Node30; case 31: return m_Node31;
-                case 32: return m_Node32; case 33: return m_Node33; case 34: return m_Node34; case 35: return m_Node35;
-                case 36: return m_Node36; case 37: return m_Node37; case 38: return m_Node38; case 39: return m_Node39;
-                case 40: return m_Node40; case 41: return m_Node41; case 42: return m_Node42; case 43: return m_Node43;
-                case 44: return m_Node44; case 45: return m_Node45; case 46: return m_Node46; case 47: return m_Node47;
-                case 48: return m_Node48; case 49: return m_Node49; case 50: return m_Node50; case 51: return m_Node51;
-                case 52: return m_Node52; case 53: return m_Node53; case 54: return m_Node54; case 55: return m_Node55;
-                case 56: return m_Node56; case 57: return m_Node57; case 58: return m_Node58; case 59: return m_Node59;
-                case 60: return m_Node60; case 61: return m_Node61; case 62: return m_Node62; case 63: return m_Node63;
+                case  0: return Node00; case  1: return Node01; case  2: return Node02; case  3: return Node03;
+                case  4: return Node04; case  5: return Node05; case  6: return Node06; case  7: return Node07;
+                case  8: return Node08; case  9: return Node09; case 10: return Node10; case 11: return Node11;
+                case 12: return Node12; case 13: return Node13; case 14: return Node14; case 15: return Node15;
+                case 16: return Node16; case 17: return Node17; case 18: return Node18; case 19: return Node19;
+                case 20: return Node20; case 21: return Node21; case 22: return Node22; case 23: return Node23;
+                case 24: return Node24; case 25: return Node25; case 26: return Node26; case 27: return Node27;
+                case 28: return Node28; case 29: return Node29; case 30: return Node30; case 31: return Node31;
+                case 32: return Node32; case 33: return Node33; case 34: return Node34; case 35: return Node35;
+                case 36: return Node36; case 37: return Node37; case 38: return Node38; case 39: return Node39;
+                case 40: return Node40; case 41: return Node41; case 42: return Node42; case 43: return Node43;
+                case 44: return Node44; case 45: return Node45; case 46: return Node46; case 47: return Node47;
+                case 48: return Node48; case 49: return Node49; case 50: return Node50; case 51: return Node51;
+                case 52: return Node52; case 53: return Node53; case 54: return Node54; case 55: return Node55;
+                case 56: return Node56; case 57: return Node57; case 58: return Node58; case 59: return Node59;
+                case 60: return Node60; case 61: return Node61; case 62: return Node62; case 63: return Node63;
                 default: return default;
             }
         }
@@ -159,22 +158,22 @@ namespace VMG.Core
         {
             switch (i)
             {
-                case  0: m_Node00 = v; break; case  1: m_Node01 = v; break; case  2: m_Node02 = v; break; case  3: m_Node03 = v; break;
-                case  4: m_Node04 = v; break; case  5: m_Node05 = v; break; case  6: m_Node06 = v; break; case  7: m_Node07 = v; break;
-                case  8: m_Node08 = v; break; case  9: m_Node09 = v; break; case 10: m_Node10 = v; break; case 11: m_Node11 = v; break;
-                case 12: m_Node12 = v; break; case 13: m_Node13 = v; break; case 14: m_Node14 = v; break; case 15: m_Node15 = v; break;
-                case 16: m_Node16 = v; break; case 17: m_Node17 = v; break; case 18: m_Node18 = v; break; case 19: m_Node19 = v; break;
-                case 20: m_Node20 = v; break; case 21: m_Node21 = v; break; case 22: m_Node22 = v; break; case 23: m_Node23 = v; break;
-                case 24: m_Node24 = v; break; case 25: m_Node25 = v; break; case 26: m_Node26 = v; break; case 27: m_Node27 = v; break;
-                case 28: m_Node28 = v; break; case 29: m_Node29 = v; break; case 30: m_Node30 = v; break; case 31: m_Node31 = v; break;
-                case 32: m_Node32 = v; break; case 33: m_Node33 = v; break; case 34: m_Node34 = v; break; case 35: m_Node35 = v; break;
-                case 36: m_Node36 = v; break; case 37: m_Node37 = v; break; case 38: m_Node38 = v; break; case 39: m_Node39 = v; break;
-                case 40: m_Node40 = v; break; case 41: m_Node41 = v; break; case 42: m_Node42 = v; break; case 43: m_Node43 = v; break;
-                case 44: m_Node44 = v; break; case 45: m_Node45 = v; break; case 46: m_Node46 = v; break; case 47: m_Node47 = v; break;
-                case 48: m_Node48 = v; break; case 49: m_Node49 = v; break; case 50: m_Node50 = v; break; case 51: m_Node51 = v; break;
-                case 52: m_Node52 = v; break; case 53: m_Node53 = v; break; case 54: m_Node54 = v; break; case 55: m_Node55 = v; break;
-                case 56: m_Node56 = v; break; case 57: m_Node57 = v; break; case 58: m_Node58 = v; break; case 59: m_Node59 = v; break;
-                case 60: m_Node60 = v; break; case 61: m_Node61 = v; break; case 62: m_Node62 = v; break; case 63: m_Node63 = v; break;
+                case  0: Node00 = v; break; case  1: Node01 = v; break; case  2: Node02 = v; break; case  3: Node03 = v; break;
+                case  4: Node04 = v; break; case  5: Node05 = v; break; case  6: Node06 = v; break; case  7: Node07 = v; break;
+                case  8: Node08 = v; break; case  9: Node09 = v; break; case 10: Node10 = v; break; case 11: Node11 = v; break;
+                case 12: Node12 = v; break; case 13: Node13 = v; break; case 14: Node14 = v; break; case 15: Node15 = v; break;
+                case 16: Node16 = v; break; case 17: Node17 = v; break; case 18: Node18 = v; break; case 19: Node19 = v; break;
+                case 20: Node20 = v; break; case 21: Node21 = v; break; case 22: Node22 = v; break; case 23: Node23 = v; break;
+                case 24: Node24 = v; break; case 25: Node25 = v; break; case 26: Node26 = v; break; case 27: Node27 = v; break;
+                case 28: Node28 = v; break; case 29: Node29 = v; break; case 30: Node30 = v; break; case 31: Node31 = v; break;
+                case 32: Node32 = v; break; case 33: Node33 = v; break; case 34: Node34 = v; break; case 35: Node35 = v; break;
+                case 36: Node36 = v; break; case 37: Node37 = v; break; case 38: Node38 = v; break; case 39: Node39 = v; break;
+                case 40: Node40 = v; break; case 41: Node41 = v; break; case 42: Node42 = v; break; case 43: Node43 = v; break;
+                case 44: Node44 = v; break; case 45: Node45 = v; break; case 46: Node46 = v; break; case 47: Node47 = v; break;
+                case 48: Node48 = v; break; case 49: Node49 = v; break; case 50: Node50 = v; break; case 51: Node51 = v; break;
+                case 52: Node52 = v; break; case 53: Node53 = v; break; case 54: Node54 = v; break; case 55: Node55 = v; break;
+                case 56: Node56 = v; break; case 57: Node57 = v; break; case 58: Node58 = v; break; case 59: Node59 = v; break;
+                case 60: Node60 = v; break; case 61: Node61 = v; break; case 62: Node62 = v; break; case 63: Node63 = v; break;
             }
         }
 
@@ -186,7 +185,7 @@ namespace VMG.Core
                 case ShapeKind.Circle: BuildEllipse(outPath, size.x * 0.5f, size.x * 0.5f); break;
                 case ShapeKind.Ellipse: BuildEllipse(outPath, size.x * 0.5f, size.y * 0.5f); break;
                 case ShapeKind.Rectangle: BuildRect(outPath, size); break;
-                case ShapeKind.RoundedRectangle: BuildRoundedRect(outPath, size, cornerRadius); break;
+                case ShapeKind.RoundedRectangle: BuildRoundedRect(outPath, size, cornerRadii); break;
                 case ShapeKind.Polygon: BuildPolygon(outPath, size.x * 0.5f, sides); break;
                 case ShapeKind.FreePath: BuildFree(outPath); break;
             }
@@ -213,37 +212,41 @@ namespace VMG.Core
             p.closed = true;
         }
 
-        private void BuildRoundedRect(VectorPath p, Vector2 s, float r)
+        private void BuildRoundedRect(VectorPath p, Vector2 s, Vector2 r)
         {
             Vector2 h = s * 0.5f;
-            float maxR = Mathf.Min(h.x, h.y);
-            // Cap strictly below half-extent so the four corner centers never
-            // coincide. When r >= maxR the shape collapses to an ellipse, so
-            // emit one as a clean special case.
-            if (r >= maxR - 1e-4f)
+            // Clamp each axis to half its extent. Going past collapses the
+            // straight side between two adjacent arcs.
+            float rx = Mathf.Clamp(r.x, 0f, h.x);
+            float ry = Mathf.Clamp(r.y, 0f, h.y);
+
+            // Degenerate to ellipse when BOTH radii reach the half-extent —
+            // the four arcs meet and the straight edges vanish.
+            if (rx >= h.x - 1e-4f && ry >= h.y - 1e-4f)
             {
                 BuildEllipse(p, h.x, h.y);
                 return;
             }
-            r = Mathf.Max(0f, r);
-            if (r <= 0f) { BuildRect(p, s); return; }
+            if (rx <= 0f && ry <= 0f) { BuildRect(p, s); return; }
 
             int arcSeg = Mathf.Max(2, circleSegments / 8);
 
-            // Four corner arcs starting from bottom-right, CCW.
-            AddArc(p, center + new Vector2( h.x - r, -h.y + r), r, -Mathf.PI * 0.5f, 0f,          arcSeg);
-            AddArc(p, center + new Vector2( h.x - r,  h.y - r), r, 0f,               Mathf.PI*0.5f, arcSeg);
-            AddArc(p, center + new Vector2(-h.x + r,  h.y - r), r, Mathf.PI*0.5f,    Mathf.PI,     arcSeg);
-            AddArc(p, center + new Vector2(-h.x + r, -h.y + r), r, Mathf.PI,         Mathf.PI*1.5f, arcSeg);
+            // Four corner arcs starting from bottom-right, CCW. Each arc
+            // center sits (rx, ry) inside the corresponding rectangle corner;
+            // points on the arc use elliptical (rx, ry) sweep.
+            AddEllipticalArc(p, center + new Vector2( h.x - rx, -h.y + ry), rx, ry, -Mathf.PI * 0.5f, 0f,            arcSeg);
+            AddEllipticalArc(p, center + new Vector2( h.x - rx,  h.y - ry), rx, ry, 0f,              Mathf.PI * 0.5f, arcSeg);
+            AddEllipticalArc(p, center + new Vector2(-h.x + rx,  h.y - ry), rx, ry, Mathf.PI * 0.5f, Mathf.PI,        arcSeg);
+            AddEllipticalArc(p, center + new Vector2(-h.x + rx, -h.y + ry), rx, ry, Mathf.PI,        Mathf.PI * 1.5f, arcSeg);
             p.closed = true;
         }
 
-        private static void AddArc(VectorPath p, Vector2 c, float r, float from, float to, int seg)
+        private static void AddEllipticalArc(VectorPath p, Vector2 c, float rx, float ry, float from, float to, int seg)
         {
             for (int i = 0; i <= seg; i++)
             {
                 float t = Mathf.Lerp(from, to, i / (float)seg);
-                p.Add(c + new Vector2(Mathf.Cos(t) * r, Mathf.Sin(t) * r));
+                p.Add(c + new Vector2(Mathf.Cos(t) * rx, Mathf.Sin(t) * ry));
             }
         }
 

@@ -6,7 +6,7 @@ namespace VMG.EditorTools
 {
     /// Custom drawer for PrimitiveShapeSource. Shows only the fields
     /// relevant to the selected ShapeKind. For FreePath, exposes the
-    /// active flat node slots (m_Node00..) with compact per-slot rows
+    /// active flat node slots (Node00..) with compact per-slot rows
     /// and Add / Remove Last buttons that adjust activeNodeCount.
     ///
     /// The 64 slot fields exist on the struct specifically so Unity's
@@ -33,7 +33,7 @@ namespace VMG.EditorTools
             var centerProp = property.FindPropertyRelative("center");
             var sizeProp = property.FindPropertyRelative("size");
             var sidesProp = property.FindPropertyRelative("sides");
-            var cornerRadiusProp = property.FindPropertyRelative("cornerRadius");
+            var cornerRadiiProp = property.FindPropertyRelative("cornerRadii");
             var circleSegmentsProp = property.FindPropertyRelative("circleSegments");
             var freeClosedProp = property.FindPropertyRelative("freeClosed");
             var bezierSamplesProp = property.FindPropertyRelative("bezierSamplesPerSegment");
@@ -75,7 +75,7 @@ namespace VMG.EditorTools
                 r.y += line + pad;
             }
             if (showSides) { EditorGUI.PropertyField(r, sidesProp); r.y += line + pad; }
-            if (showCornerRadius) { EditorGUI.PropertyField(r, cornerRadiusProp); r.y += line + pad; }
+            if (showCornerRadius) { EditorGUI.PropertyField(r, cornerRadiiProp); r.y += line + pad; }
             if (showCircleSegments) { EditorGUI.PropertyField(r, circleSegmentsProp); r.y += line + pad; }
             if (showFree)
             {
@@ -303,7 +303,7 @@ namespace VMG.EditorTools
 
         private static string SlotName(int i)
         {
-            return i < 10 ? "m_Node0" + i : "m_Node" + i;
+            return i < 10 ? "Node0" + i : "Node" + i;
         }
     }
 }

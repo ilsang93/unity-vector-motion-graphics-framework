@@ -29,19 +29,19 @@ namespace VMG.EditorTools
 
         private void OnEnable()
         {
-            m_SvgAsset = serializedObject.FindProperty("m_SvgAsset");
-            m_SvgUnitsPerWorldUnit = serializedObject.FindProperty("m_SvgUnitsPerWorldUnit");
-            m_ShapeStack = serializedObject.FindProperty("m_ShapeStack");
-            m_Stroke = serializedObject.FindProperty("m_Stroke");
-            m_Fill = serializedObject.FindProperty("m_Fill");
-            m_Depth = serializedObject.FindProperty("m_Depth");
-            m_RoundCorners = serializedObject.FindProperty("m_RoundCorners");
-            m_Trim = serializedObject.FindProperty("m_Trim");
-            m_Tint = serializedObject.FindProperty("m_Tint");
-            m_Material = serializedObject.FindProperty("m_Material");
-            m_Texture = serializedObject.FindProperty("m_Texture");
-            m_SortingLayerID = serializedObject.FindProperty("m_SortingLayerID");
-            m_SortingOrder = serializedObject.FindProperty("m_SortingOrder");
+            m_SvgAsset = serializedObject.FindProperty("SvgAsset");
+            m_SvgUnitsPerWorldUnit = serializedObject.FindProperty("SvgUnitsPerWorldUnit");
+            m_ShapeStack = serializedObject.FindProperty("ShapeStack");
+            m_Stroke = serializedObject.FindProperty("Stroke");
+            m_Fill = serializedObject.FindProperty("Fill");
+            m_Depth = serializedObject.FindProperty("Depth");
+            m_RoundCorners = serializedObject.FindProperty("RoundCorners");
+            m_Trim = serializedObject.FindProperty("Trim");
+            m_Tint = serializedObject.FindProperty("Tint");
+            m_Material = serializedObject.FindProperty("Material");
+            m_Texture = serializedObject.FindProperty("Texture");
+            m_SortingLayerID = serializedObject.FindProperty("SortingLayerID");
+            m_SortingOrder = serializedObject.FindProperty("SortingOrder");
         }
 
         public override void OnInspectorGUI()
@@ -131,7 +131,7 @@ namespace VMG.EditorTools
             var renderer = (VectorSpriteRenderer)target;
             var so = new SerializedObject(renderer);
 
-            if (so.FindProperty("m_SvgAsset").objectReferenceValue != null) return;
+            if (so.FindProperty("SvgAsset").objectReferenceValue != null) return;
 
             var stack = renderer.ShapeStack;
             m_ActiveSlot = FreePathSceneHandles.DrawSlotOverlay(m_ActiveSlot, ref stack);
@@ -140,11 +140,11 @@ namespace VMG.EditorTools
             // a multi-slot blend without switching the overlay back and forth.
             FreePathSceneHandles.DrawInactiveSlotGuides(renderer.transform, ref stack, m_ActiveSlot);
 
-            // Each slot is at m_ShapeStack.m_Slot{N}.shape — that's the
+            // Each slot is at ShapeStack.Slot{N}.shape — that's the
             // SerializedProperty path the handle code needs in order to
             // route writes through SerializedProperty (and therefore
             // through Record mode's auto-keyframe capture).
-            string shapePath = "m_ShapeStack.m_Slot" + m_ActiveSlot + ".shape";
+            string shapePath = "ShapeStack.Slot" + m_ActiveSlot + ".shape";
             var slot = stack.GetSlot(m_ActiveSlot);
 
             if (slot.shape.kind != ShapeKind.FreePath) return;

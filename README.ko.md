@@ -4,7 +4,7 @@
 
 Unity용 절차적(procedural) 벡터 모션 그래픽 런타임. After Effects의 셰이프 레이어 같은 표현력을, UGUI와 월드 스페이스 양쪽 렌더러에서 Unity Animator / Timeline과 완전히 통합되는 형태로 제공합니다.
 
-## 주요 기능 (0.11.0)
+## 주요 기능 (0.26.0)
 
 - Path + Node 데이터 모델, 노드별 큐빅 베지어(`inTangent` / `outTangent`) 지원. 모든 모디파이어 적용 전에 미리 테셀레이션됨
 - CPU 기반 절차적 메시 생성
@@ -66,6 +66,23 @@ vectorImage.DOSlotIntensity(0, 0f, 0.8f);    // 슬롯 0을 끄기
 
 DOTween이 없는 프로젝트에는 영향을 주지 않습니다 (하드 의존성 없음). 전체 surface는 `Samples~/TweenIntegration/README.md` 참고.
 
+## 독립형 애니메이션 (VMGAnimator)
+
+아래의 Unity AnimationClip / Timeline 경로 외에도, VMG는 `PlayableDirector`나 Unity Timeline에 의존하지 않는 자체 애니메이터를 함께 제공합니다. 세 가지 작성 방식이 모두 같은 엔진을 구동합니다:
+
+- **`VMGAnimationClip` + VMGAnimator** — ScriptableObject 클립 에셋, 전용 타임라인 윈도우에서 편집. 트랙별 키와 ease, 다중 타겟, 이벤트, baseline 복원 지원.
+- **코드 API (anime.js 스타일 fluent 빌더)** — `VMGFx.Animate(target).To(...).Duration(...).Ease(...).Play()`, 시퀀싱용 `VMGFx.Timeline()` (상대 위치 `"+=0.2"`, `"<"`, `"-=F"`), 타겟별 오프셋용 `VMGFx.Stagger(targets, ...)`, spring / motion-path / function-value 채널.
+- **`.vmgfx` DSL** — 평문 스크립트 (`add`, `animate`, `timeline`, `keyframes`, `stagger` 등) 가 같은 엔진으로 컴파일됨. `.vmgfx` 파일(또는 임의의 TextAsset)을 `VMGAnimator.script`에 할당하면 enable 시점에 하위 계층이 빌드됨. 1회 재생 vs 무한 재생을 위한 `playOnEnable` / `loopScript` 토글 제공.
+
+### CSS `@keyframes` 임포터
+
+`VMG.Animation.Serialization.VMGCssKeyframes.Translate(css, out warnings)` — self-contained CSS 키프레임 애니메이션을 `.vmgfx` 텍스트로 변환. AE / Figma / Bodymovin의 CSS export를 대상으로 설계됨 — `transform`, `opacity`, 색상 / 테두리 채널과 W3C 스펙 cubic-bezier easing 매핑 지원. 에디터 진입점:
+
+- `Tools ▸ VMG ▸ Import CSS @keyframes…` — 파일 다이얼로그
+- `Tools ▸ VMG ▸ CSS → VMGFx Window` — 붙여넣기 윈도우
+
+의도적으로 제외된 범위: HTML 동반 입력, CSS cascade, pseudo-class 상태, element 별 custom property 기반 stagger. 야생 데모는 `@keyframes` 핵심만 추려서 임포트하고, element 단위 효과는 `VMGFx.Stagger`와 타임라인 상태로 재구성하는 흐름을 권장.
+
 ## 애니메이션 지원
 
 VMG의 설계 목표는 "인스펙터에서 편집할 수 있는 모든 파라미터는 `AnimationClip` / Timeline에서도 키프레임 가능하다"입니다. 두 렌더러 모두 매 프레임 dirty 마크 처리되므로 (UGUI는 `LateUpdate`, World는 `Update`) Animator가 쓰는 값이 항상 메시에 반영됩니다.
@@ -75,16 +92,16 @@ VMG의 설계 목표는 "인스펙터에서 편집할 수 있는 모든 파라�
 모든 인스펙터 필드가 struct 멤버로 노출되어 있어서 Animation 윈도우의 "Add Property" 트리가 안쪽까지 들어갈 수 있습니다. 전체 목록:
 
 - **ShapeStack** — `resampleCount`, 그리고 4개 슬롯:
-  - `m_Slot0..m_Slot3.intensity` — 블렌드 가중치 (0이면 비활성)
-  - `m_Slot0..m_Slot3.shape.*` — PrimitiveShapeSource 전체 surface
-- **프리미티브 셰이프 (슬롯별)** — `kind`, `center.x/y`, `size.x/y`, `sides`, `cornerRadius`, `circleSegments`, `bezierSamplesPerSegment`, `freeClosed`, `activeNodeCount`
-- **FreePath 노드 (슬롯별)** — 플랫 슬롯별로 `m_Node00.position.x/y`, `m_Node00.inTangent.x/y`, `m_Node00.outTangent.x/y`, `m_Node00.type` ... `m_Node63`까지. Animation 윈도우에서 직접 바인딩하거나, Record가 켜진 상태에서 SceneView 핸들을 드래그하면 자동으로 플레이헤드 위치에 키프레임이 생성됨
+  - `Slot0..Slot3.intensity` — 블렌드 가중치 (0이면 비활성)
+  - `Slot0..Slot3.shape.*` — PrimitiveShapeSource 전체 surface
+- **프리미티브 셰이프 (슬롯별)** — `kind`, `center.x/y`, `size.x/y`, `sides`, `cornerRadii.x/y`, `circleSegments`, `bezierSamplesPerSegment`, `freeClosed`, `activeNodeCount`
+- **FreePath 노드 (슬롯별)** — 플랫 슬롯별로 `Node00.position.x/y`, `Node00.inTangent.x/y`, `Node00.outTangent.x/y`, `Node00.type` ... `Node63`까지. Animation 윈도우에서 직접 바인딩하거나, Record가 켜진 상태에서 SceneView 핸들을 드래그하면 자동으로 플레이헤드 위치에 키프레임이 생성됨
 - **Stroke** — `enabled`, `color.rgba`, `width`, `alignment`, `cap`, `join`, `miterLimit`
 - **Fill** — `enabled`, `color.rgba`
-- **모디파이어** — `RoundCornerModifier`와 `TrimPathModifier`의 모든 `[SerializeField]` 필드 (각자의 `enabled` 플래그 포함 — 클립 중간에 모디파이어를 켜고 끌 수 있음)
+- **모디파이어** — `RoundCornerModifier`와 `TrimPathModifier`의 모든 직렬화 필드 (각자의 `enabled` 플래그 포함 — 클립 중간에 모디파이어를 켜고 끌 수 있음)
 - **UGUI 렌더러** — `FitToRect`, `Graphic.color`
 - **월드 렌더러** — `Tint`, `SvgUnitsPerWorldUnit`, `SortingLayerID`, `SortingOrder`
-- **Depth (월드 렌더러 전용)** — `m_Depth.enabled`, `m_Depth.thickness`, `m_Depth.alignment`
+- **Depth (월드 렌더러 전용)** — `Depth.enabled`, `Depth.thickness`, `Depth.alignment`
 
 ### 다중 셰이프 블렌딩
 
@@ -92,7 +109,7 @@ ShapeStack이 기존 PathMorphModifier를 대체:
 
 1. "출발" 셰이프를 슬롯 0에 (intensity 1)
 2. "도착" 셰이프를 슬롯 1에 (intensity 0)
-3. `m_Slot1.intensity`를 0 → 1로 키프레임 — 렌더러가 두 경로를 arc-length 리샘플링한 뒤 인덱스별로 lerp
+3. `Slot1.intensity`를 0 → 1로 키프레임 — 렌더러가 두 경로를 arc-length 리샘플링한 뒤 인덱스별로 lerp
 4. 선택적으로 슬롯 0의 intensity를 병렬로 페이드아웃하면 클립 끝에서 순수한 도착 셰이프가 됨
 
 4개 슬롯 모두 동등하게 가중치 처리됩니다. "베이스" 슬롯이 따로 없습니다. 3~4개 슬롯을 동시에 활성화하면 매끄러운 N-way 블렌드가 가능.

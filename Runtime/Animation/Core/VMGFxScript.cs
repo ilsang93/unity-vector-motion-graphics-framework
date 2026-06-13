@@ -5,6 +5,7 @@ using System.Text;
 using UnityEngine;
 using VMG.Animation;
 using VMG.Core;
+using VMG.Svg;
 
 namespace VMG.Animation.Core
 {

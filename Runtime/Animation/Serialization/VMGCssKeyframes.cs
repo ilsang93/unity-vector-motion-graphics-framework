@@ -636,7 +636,7 @@ namespace VMG.Animation.Serialization
                                 warnings.Add($"selector '{sel}' references undefined @keyframes '{anim.name}'");
                                 continue;
                             }
-                            EmitKeyframes(sb, target, anim, block, warnings);
+                            EmitKeyframes(sb, target, anim, block, sheet.customProperties, warnings);
                             sb.AppendLine();
                         }
                     }
@@ -660,7 +660,7 @@ namespace VMG.Animation.Serialization
                 return s;
             }
 
-            static void EmitKeyframes(StringBuilder sb, string target, AnimationBinding anim, KeyframesBlock block, List<string> warnings)
+            static void EmitKeyframes(StringBuilder sb, string target, AnimationBinding anim, KeyframesBlock block, Dictionary<string, string> customProps, List<string> warnings)
             {
                 // Pipeline:
                 //   1. Translate each CSS frame to a flat path=value dict
@@ -706,7 +706,7 @@ namespace VMG.Animation.Serialization
                 {
                     var flat = new Dictionary<string, string>();
                     bool hasTransform = f.decls.ContainsKey("transform");
-                    TranslateDecls(f.decls, flat, running, blockAxes, sheet.customProperties, warnings);
+                    TranslateDecls(f.decls, flat, running, blockAxes, customProps, warnings);
                     if (hasTransform)
                     {
                         if (blockAxes.usesTranslate)

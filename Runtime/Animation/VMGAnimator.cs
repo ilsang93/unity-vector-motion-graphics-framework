@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -30,6 +31,19 @@ namespace VMG.Animation
 
         [Tooltip("If true, loop playback in script mode (progress wraps 1→0). Clip mode uses VMGAnimationClip.loop instead. Has no effect in External mode.")]
         public bool loopScript;
+
+        // Per-instance asset registry: the script can reference these by name
+        // via `asset(name)` in any value position that accepts an asset
+        // (e.g. motionPath path=asset(myCurve)). Use VMGShapeAsset for motion
+        // paths — anime.js parity: any SVG path is a usable motion curve.
+        [Serializable]
+        public struct NamedAsset
+        {
+            public string name;
+            public UnityEngine.Object asset;
+        }
+        [Tooltip("Named assets the script can look up via asset(name). Currently consumed by motionPath path=asset(...).")]
+        public List<NamedAsset> assets = new List<NamedAsset>();
 
         public bool IsReady { get; private set; }
         public event Action ReadyChanged;
@@ -247,7 +261,7 @@ namespace VMG.Animation
 
             try
             {
-                m_Script = VMGFxScript.Compile(script.text, transform);
+                m_Script = VMGFxScript.Compile(script.text, transform, BuildAssetLookup());
                 m_Script.OnEvent += OnScriptEvent;
                 // VMGAnimator drives Seek directly each LateUpdate; the engine
                 // must NOT tick these animations standalone.
@@ -395,6 +409,26 @@ namespace VMG.Animation
         void CancelPlayAsync()
         {
             CompletePlayAsync(cancelled: true);
+        }
+
+        // Materialize the inspector asset list into a name→object lookup.
+        // Returns null when no entries are present so VMGFxScript.Compile
+        // can short-circuit. Duplicate names: last entry wins, with a
+        // warning — silently dropping would mask configuration mistakes.
+        Dictionary<string, UnityEngine.Object> BuildAssetLookup()
+        {
+            if (assets == null || assets.Count == 0) return null;
+            Dictionary<string, UnityEngine.Object> dict = null;
+            for (int i = 0; i < assets.Count; i++)
+            {
+                var entry = assets[i];
+                if (string.IsNullOrEmpty(entry.name) || entry.asset == null) continue;
+                if (dict == null) dict = new Dictionary<string, UnityEngine.Object>(assets.Count);
+                if (dict.ContainsKey(entry.name))
+                    Debug.LogWarning($"[VMG.Animation] VMGAnimator on '{name}': duplicate asset name '{entry.name}' — last entry wins.", this);
+                dict[entry.name] = entry.asset;
+            }
+            return dict;
         }
     }
 }

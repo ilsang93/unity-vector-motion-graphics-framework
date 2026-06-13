@@ -41,13 +41,29 @@ namespace VMG.Animation.Core
     // Usable in any -> value, from= value, or keyframes path=value position
     // on numeric channels. Seed (int) is optional — supply for deterministic
     // sequences; omit for global UnityEngine.Random.
+    //
+    // Asset references:
+    //   motionPath <target> path=asset(<name>) [subShape=<int>]
+    //                       [autoRotate ...] [duration= ease= ...]
+    // The named entry must exist in VMGAnimator.assets and resolve to a
+    // VMGShapeAsset (anime.js parity — any SVG path is a usable motion
+    // curve). When 'path' is supplied, inline 'points='/'closed=' are
+    // ignored. subShape (default 0) picks which sub-shape to follow.
     //   set/call/label: at
     public static class VMGFxScript
     {
         public static VMGFxCompiled Compile(string source, Transform root)
+            => Compile(source, root, null);
+
+        // assetLookup: optional name→UnityEngine.Object map. Currently consumed
+        // by `motionPath path=asset(name)` to resolve a VMGShapeAsset by name.
+        // Pass null when no asset references are expected — the legacy 2-arg
+        // overload routes here with null.
+        public static VMGFxCompiled Compile(string source, Transform root, IReadOnlyDictionary<string, UnityEngine.Object> assetLookup)
         {
             if (root == null) throw new ArgumentNullException(nameof(root));
             var compiled = new VMGFxCompiled();
+            compiled.assetLookup = assetLookup;
             if (string.IsNullOrEmpty(source)) return compiled;
 
             var tokens = Tokenizer.Tokenize(source);
@@ -947,7 +963,7 @@ namespace VMG.Animation.Core
                             if (builder != null)
                                 Debug.LogWarning($"[VMGFx] stagger line {m.line}: multiple animate/motionPath statements in a stagger block — only the last one's tween is staggered.");
                             builder = VMGFx.Animate(resolved);
-                            ConfigureMotionPath(builder, m.attrs);
+                            ConfigureMotionPath(builder, m.attrs, compiled);
                         }
                     }
                     return builder;
@@ -1373,7 +1389,7 @@ namespace VMG.Animation.Core
                 var target = ResolveTarget(mp.target, scene, root, null);
                 if (target == null) { Debug.LogError($"[VMGFx] motionPath: target '{mp.target}' not found"); return; }
                 var builder = VMGFx.Animate(target);
-                ConfigureMotionPath(builder, mp.attrs);
+                ConfigureMotionPath(builder, mp.attrs, compiled);
                 compiled.standaloneAnimates.Add(builder);
             }
 
@@ -1401,7 +1417,7 @@ namespace VMG.Animation.Core
                             var target = ResolveTarget(mp.target, scene, root, null);
                             if (target == null) { Debug.LogError($"[VMGFx] motionPath: target '{mp.target}' not found"); break; }
                             var builder = VMGFx.Animate(target);
-                            ConfigureMotionPath(builder, mp.attrs);
+                            ConfigureMotionPath(builder, mp.attrs, compiled);
                             var at = ExtractAt(mp.attrs);
                             tl.Add(builder, at);
                             break;
@@ -1830,30 +1846,84 @@ namespace VMG.Animation.Core
             // to the underlying motion path tween. `at` is consumed by
             // ExtractAt at the caller. Asset-mode binding (`asset=`,
             // `subShape=`) is deferred to a future DSL round.
-            static void ConfigureMotionPath(VMGAnimate builder, Dictionary<string, string> attrs)
+            // Recognise `asset(name)` and return the registered Object, or
+            // false if the expression is not in asset(...) form or the name
+            // is not in the compiled lookup. Whitespace inside the parens is
+            // tolerated (the tokenizer preserves it because of paren-aware
+            // value mode).
+            static bool TryResolveAssetExpr(string raw, VMGFxCompiled compiled, out UnityEngine.Object asset)
             {
-                if (attrs == null) { Debug.LogError("[VMGFx] motionPath requires points=x1,y1,...; got no attributes"); return; }
-
-                List<Vector2> pts = null;
-                bool closed = false;
-                if (attrs.TryGetValue("points", out var ptsRaw) && !string.IsNullOrEmpty(ptsRaw))
+                asset = null;
+                if (string.IsNullOrEmpty(raw)) return false;
+                int open = raw.IndexOf('(');
+                if (open < 0 || raw[raw.Length - 1] != ')') return false;
+                if (raw.Substring(0, open).Trim() != "asset") return false;
+                string name = raw.Substring(open + 1, raw.Length - open - 2).Trim();
+                // Allow optional quotes so authors can write either
+                // asset(myCurve) or asset("myCurve") — both feel natural.
+                if (name.Length >= 2 &&
+                    ((name[0] == '"' && name[name.Length - 1] == '"') ||
+                     (name[0] == '\'' && name[name.Length - 1] == '\'')))
                 {
-                    var parts = ptsRaw.Split(',');
-                    pts = new List<Vector2>();
-                    for (int i = 0; i + 1 < parts.Length; i += 2)
+                    name = name.Substring(1, name.Length - 2);
+                }
+                if (string.IsNullOrEmpty(name)) return false;
+                if (compiled == null || compiled.assetLookup == null) return false;
+                return compiled.assetLookup.TryGetValue(name, out asset) && asset != null;
+            }
+
+            static void ConfigureMotionPath(VMGAnimate builder, Dictionary<string, string> attrs, VMGFxCompiled compiled)
+            {
+                if (attrs == null) { Debug.LogError("[VMGFx] motionPath requires points=... or path=asset(name); got no attributes"); return; }
+
+                // `path=asset(name)` takes priority over inline `points=...`.
+                // The two are mutually exclusive — if both are present, the
+                // asset wins and we log a warning. Order of definition would
+                // be ambiguous otherwise (asset is a single curve, points is
+                // a polyline — there is no sensible merge).
+                int subShapeIndex = 0;
+                if (attrs.TryGetValue("subShape", out var subRaw) && TryParseInt(subRaw, out var subParsed))
+                    subShapeIndex = subParsed;
+
+                if (attrs.TryGetValue("path", out var pathRaw) && !string.IsNullOrEmpty(pathRaw))
+                {
+                    if (attrs.ContainsKey("points"))
+                        Debug.LogWarning("[VMGFx] motionPath: both 'path' and 'points' supplied; using 'path' and ignoring 'points'");
+                    if (!TryResolveAssetExpr(pathRaw, compiled, out var assetObj))
                     {
-                        if (TryParseFloat(parts[i], out var x) && TryParseFloat(parts[i + 1], out var y))
-                            pts.Add(new Vector2(x, y));
+                        Debug.LogError($"[VMGFx] motionPath: path='{pathRaw}' is not an asset(...) reference or the named asset is not registered on this VMGAnimator");
+                        return;
                     }
+                    if (!(assetObj is VMGShapeAsset shape))
+                    {
+                        Debug.LogError($"[VMGFx] motionPath: asset bound to '{pathRaw}' is {assetObj.GetType().Name}, expected VMGShapeAsset");
+                        return;
+                    }
+                    builder.AlongPath(shape, subShapeIndex);
                 }
-                if (attrs.TryGetValue("closed", out var closedRaw)) closed = ParseFlag(closedRaw);
-
-                if (pts == null || pts.Count == 0)
+                else
                 {
-                    Debug.LogError("[VMGFx] motionPath requires points=x1,y1,x2,y2,... with at least one point");
-                    return;
+                    List<Vector2> pts = null;
+                    bool closed = false;
+                    if (attrs.TryGetValue("points", out var ptsRaw) && !string.IsNullOrEmpty(ptsRaw))
+                    {
+                        var parts = ptsRaw.Split(',');
+                        pts = new List<Vector2>();
+                        for (int i = 0; i + 1 < parts.Length; i += 2)
+                        {
+                            if (TryParseFloat(parts[i], out var x) && TryParseFloat(parts[i + 1], out var y))
+                                pts.Add(new Vector2(x, y));
+                        }
+                    }
+                    if (attrs.TryGetValue("closed", out var closedRaw)) closed = ParseFlag(closedRaw);
+
+                    if (pts == null || pts.Count == 0)
+                    {
+                        Debug.LogError("[VMGFx] motionPath requires points=x1,y1,x2,y2,... with at least one point, or path=asset(name)");
+                        return;
+                    }
+                    builder.AlongPath(pts, closed);
                 }
-                builder.AlongPath(pts, closed);
 
                 // autoRotate: bare key = true with offset 0, value =
                 // true/false, value = number → offsetDeg (anime.js parity).
@@ -1882,6 +1952,8 @@ namespace VMG.Animation.Core
                         case "closed":
                         case "autoRotate":
                         case "at":
+                        case "path":
+                        case "subShape":
                             break; // handled above / by caller
                         default:
                             Debug.LogWarning($"[VMGFx] unknown motionPath attribute '{kv.Key}'");
@@ -2319,6 +2391,12 @@ namespace VMG.Animation.Core
         public VMGScene scene;
         public List<VMGAnimate> standaloneAnimates = new List<VMGAnimate>();
         public List<VMGTimeline> timelines = new List<VMGTimeline>();
+
+        // Optional name→Object map populated by the Compile entry point.
+        // Statements reference entries via `asset(name)` in their value
+        // position. Null when no registry was supplied; callers should
+        // check before consuming.
+        internal IReadOnlyDictionary<string, UnityEngine.Object> assetLookup;
 
         // VMGAnimator forwards 'call' statements here. Default impl logs;
         // user wiring can subscribe to scriptEvent on VMGAnimator.

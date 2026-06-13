@@ -180,6 +180,17 @@ namespace VMG.Animation.Serialization
         {
             public List<KeyframesBlock> keyframes = new List<KeyframesBlock>();
             public List<SelectorRule> rules = new List<SelectorRule>();
+            // Custom-property store. Currently populated only from `:root`
+            // declarations — element-scoped vars (e.g. `.box { --x: ... }`)
+            // would need a selector matcher we don't have, so they're
+            // dropped with a warning. Values are stored as raw CSS strings
+            // (var(--inner) chains are resolved at lookup time by
+            // ResolveVarFallback).
+            // OrdinalIgnoreCase because ParseDeclBlock lowercases its keys —
+            // matching the var() lookup case-insensitively keeps a slight
+            // CSS-spec deviation contained to one place rather than spreading
+            // case-normalization through every reader.
+            public Dictionary<string, string> customProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         // -------- Parser --------
@@ -211,7 +222,7 @@ namespace VMG.Animation.Serialization
                     }
 
                     // Selector rule: <sel-list> { <decl-list> }
-                    var rule = ParseSelectorRule(toks, ref i, warnings);
+                    var rule = ParseSelectorRule(toks, ref i, warnings, sheet);
                     if (rule != null) sheet.rules.Add(rule);
                 }
                 return sheet;
@@ -292,7 +303,7 @@ namespace VMG.Animation.Serialization
                 return block;
             }
 
-            static SelectorRule ParseSelectorRule(List<Tok> toks, ref int i, List<string> warnings)
+            static SelectorRule ParseSelectorRule(List<Tok> toks, ref int i, List<string> warnings, Stylesheet sheet)
             {
                 // Collect tokens up to '{'.
                 var selToks = new List<Tok>();
@@ -312,6 +323,31 @@ namespace VMG.Animation.Serialization
                 var rule = new SelectorRule();
                 rule.selectors = SplitSelectorList(selToks, warnings);
                 var decls = ParseDeclBlock(toks, ref i, warnings);
+
+                // CSS custom properties live in decls under their literal
+                // `--name` keys. Only :root scope is supported — element
+                // selectors would need a matcher we don't have. Other
+                // selectors' --vars get dropped with a warning so the
+                // author knows they were ignored, not silently respected.
+                bool isRoot = rule.selectors.Count == 1 && rule.selectors[0].Trim() == ":root";
+                List<string> varKeys = null;
+                foreach (var k in decls.Keys)
+                {
+                    if (k.StartsWith("--", StringComparison.Ordinal))
+                    {
+                        if (varKeys == null) varKeys = new List<string>();
+                        varKeys.Add(k);
+                    }
+                }
+                if (varKeys != null)
+                {
+                    foreach (var k in varKeys)
+                    {
+                        if (isRoot) sheet.customProperties[k] = decls[k];
+                        else warnings.Add($"custom property '{k}' on selector '{string.Join(",", rule.selectors)}' is element-scoped; only :root is supported, dropped");
+                        decls.Remove(k);
+                    }
+                }
 
                 // Combine sub-properties to a synthetic 'animation' shorthand
                 // if 'animation-name' was supplied. animation longhands win.
@@ -670,7 +706,7 @@ namespace VMG.Animation.Serialization
                 {
                     var flat = new Dictionary<string, string>();
                     bool hasTransform = f.decls.ContainsKey("transform");
-                    TranslateDecls(f.decls, flat, running, blockAxes, warnings);
+                    TranslateDecls(f.decls, flat, running, blockAxes, sheet.customProperties, warnings);
                     if (hasTransform)
                     {
                         if (blockAxes.usesTranslate)
@@ -807,15 +843,20 @@ namespace VMG.Animation.Serialization
             }
 
             static void TranslateDecls(Dictionary<string, string> decls, Dictionary<string, string> flat,
-                                       Dictionary<string, string> running, BlockAxes axes, List<string> warnings)
+                                       Dictionary<string, string> running, BlockAxes axes,
+                                       Dictionary<string, string> customProps, List<string> warnings)
             {
                 foreach (var kv in decls)
                 {
                     var prop = kv.Key;
-                    var val = kv.Value;
+                    // Resolve every var() reference up-front so each
+                    // property-specific branch below sees plain CSS values.
+                    // Properties whose values are parsed token-by-token
+                    // (transform) still need to push customProps further down.
+                    var val = ResolveVarFallback(kv.Value, customProps, warnings);
                     if (prop == "transform")
                     {
-                        ParseTransform(val, running, warnings);
+                        ParseTransform(val, running, customProps, warnings);
                         continue;
                     }
                     if (prop == "opacity")
@@ -913,7 +954,7 @@ namespace VMG.Animation.Serialization
 
             // Parse a single 'transform' value: translate(...) scale(...) rotate(...)
             // pieces. Each parsed piece updates the running axis vars.
-            static void ParseTransform(string val, Dictionary<string, string> running, List<string> warnings)
+            static void ParseTransform(string val, Dictionary<string, string> running, Dictionary<string, string> customProps, List<string> warnings)
             {
                 int i = 0;
                 while (i < val.Length)
@@ -934,14 +975,14 @@ namespace VMG.Animation.Serialization
                     }
                     var argStr = val.Substring(argStart, i - argStart);
                     if (i < val.Length) i++; // ')'
-                    ApplyTransformFn(name, argStr, running, warnings);
+                    ApplyTransformFn(name, argStr, running, customProps, warnings);
                 }
             }
 
-            static void ApplyTransformFn(string name, string argStr, Dictionary<string, string> running, List<string> warnings)
+            static void ApplyTransformFn(string name, string argStr, Dictionary<string, string> running, Dictionary<string, string> customProps, List<string> warnings)
             {
                 var args = SplitArgs(argStr);
-                for (int ai = 0; ai < args.Count; ai++) args[ai] = ResolveVarFallback(args[ai], warnings);
+                for (int ai = 0; ai < args.Count; ai++) args[ai] = ResolveVarFallback(args[ai], customProps, warnings);
                 switch (name.ToLowerInvariant())
                 {
                     case "translate":
@@ -1011,15 +1052,16 @@ namespace VMG.Animation.Serialization
                 return result;
             }
 
-            // Resolve a single CSS `var(--name [, fallback])` reference to its
-            // fallback when present. We have no stylesheet-wide custom-property
-            // store, so a var() with no fallback is unresolvable — we keep the
-            // raw text (downstream parse will fail and a warning fires there).
-            // Multiple var()s in one expression are resolved left-to-right.
-            // calc() wrappers are stripped only when the inner expression is
-            // already a bare number after substitution; mixed-unit arithmetic
-            // (calc(2 * 3px)) is out of scope.
-            static string ResolveVarFallback(string raw, List<string> warnings)
+            // Resolve a single CSS `var(--name [, fallback])` reference. The
+            // :root custom-property store (when supplied) is consulted first;
+            // if the name is missing there, the fallback expression is used;
+            // if there's no fallback either, the var() is left unresolved
+            // and a warning is logged (downstream parse will also surface
+            // the problem). Multiple var()s in one expression are resolved
+            // left-to-right. calc() wrappers are stripped only when the
+            // inner expression is already a bare number after substitution;
+            // mixed-unit arithmetic (calc(2 * 3px)) is out of scope.
+            static string ResolveVarFallback(string raw, Dictionary<string, string> customProps, List<string> warnings)
             {
                 if (string.IsNullOrEmpty(raw) || raw.IndexOf("var(", System.StringComparison.OrdinalIgnoreCase) < 0)
                     return raw;
@@ -1041,16 +1083,24 @@ namespace VMG.Animation.Serialization
                     if (close < 0) { warnings.Add($"var() unterminated in '{raw}'"); break; }
                     var body = s.Substring(open + 4, close - open - 4);
                     var parts = SplitArgs(body);
-                    string replacement;
-                    if (parts.Count >= 2)
+                    string name = parts.Count > 0 ? parts[0].Trim() : "";
+
+                    string replacement = null;
+                    if (!string.IsNullOrEmpty(name) && customProps != null && customProps.TryGetValue(name, out var stored))
                     {
-                        replacement = ResolveVarFallback(parts[1], warnings); // fallback may itself contain var()
+                        // The stored value may itself reference other vars
+                        // (e.g. --primary: var(--brand)) so recurse.
+                        replacement = ResolveVarFallback(stored, customProps, warnings);
                     }
-                    else
+                    else if (parts.Count >= 2)
                     {
-                        warnings.Add($"var('{(parts.Count > 0 ? parts[0] : "")}') has no fallback and no custom-property store; left unresolved");
+                        replacement = ResolveVarFallback(parts[1], customProps, warnings);
+                    }
+
+                    if (replacement == null)
+                    {
+                        warnings.Add($"var('{name}') is not declared in :root and has no fallback; left unresolved");
                         replacement = s.Substring(open, close - open + 1); // keep original — downstream will warn
-                        // Avoid infinite loop: bail out of replacement.
                         if (++guard > 8) break;
                         s = s.Substring(0, open) + replacement + s.Substring(close + 1);
                         continue;

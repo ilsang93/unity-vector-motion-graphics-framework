@@ -30,10 +30,41 @@ namespace VMG.UI
 
         public override Texture mainTexture => Texture != null ? Texture : base.mainTexture;
 
+        // The package's SDF-AA shader makes vector edges antialias regardless
+        // of zoom — without it Canvas falls back to UI/Default's binary
+        // alpha cutoff which produces stairsteps on diagonals. User can
+        // still override by assigning their own material in the inspector;
+        // this only kicks in when m_Material is null (the default state).
+        private static Material s_VmgDefaultMat;
+        public override Material defaultMaterial
+        {
+            get
+            {
+                if (s_VmgDefaultMat == null)
+                {
+                    var shader = Shader.Find("VMG/UI/VectorSDF");
+                    if (shader != null) s_VmgDefaultMat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                }
+                return s_VmgDefaultMat != null ? s_VmgDefaultMat : base.defaultMaterial;
+            }
+        }
+
         protected override void OnEnable()
         {
             base.OnEnable();
+            EnsureCanvasUv1Channel();
             SetVerticesDirty();
+        }
+
+        // UGUI strips UV1 from the vertex stream by default — the SDF AA
+        // distance channel travels through UV1, so enable it on the owning
+        // Canvas. Idempotent; the bitmask write is cheap and authoritative.
+        private void EnsureCanvasUv1Channel()
+        {
+            var c = canvas;
+            if (c == null) return;
+            var root = c.rootCanvas != null ? c.rootCanvas : c;
+            root.additionalShaderChannels |= AdditionalCanvasShaderChannels.TexCoord1;
         }
 
 #if UNITY_EDITOR
@@ -48,6 +79,12 @@ namespace VMG.UI
         {
             base.OnRectTransformDimensionsChange();
             if (FitToRect) SetVerticesDirty();
+        }
+
+        protected override void OnCanvasHierarchyChanged()
+        {
+            base.OnCanvasHierarchyChanged();
+            EnsureCanvasUv1Channel();
         }
 
         /// Animator/Timeline-driven [SerializeField] writes don't go through
@@ -205,12 +242,26 @@ namespace VMG.UI
         {
             int baseV = vh.currentVertCount;
             int vc = mb.vertices.Count;
+            bool hasUv1 = mb.uv1s.Count == vc;
             for (int i = 0; i < vc; i++)
             {
                 var v = mb.vertices[i];
                 var c = mb.colors[i];
                 var uv = mb.uvs[i];
-                vh.AddVert(v, c, uv);
+                Vector2 uv1 = hasUv1 ? mb.uv1s[i] : new Vector2(1f, 0f);
+                // VertexHelper has no (pos, color, uv0, uv1) overload, so
+                // populate a UIVertex and push that — same allocation cost
+                // as the 3-arg form (vh keeps internal SoA arrays).
+                var ui = new UIVertex
+                {
+                    position = v,
+                    color = c,
+                    uv0 = uv,
+                    uv1 = uv1,
+                    normal = new Vector3(0f, 0f, -1f),
+                    tangent = new Vector4(1f, 0f, 0f, -1f)
+                };
+                vh.AddVert(ui);
             }
             int tc = mb.triangles.Count;
             for (int i = 0; i + 2 < tc; i += 3)

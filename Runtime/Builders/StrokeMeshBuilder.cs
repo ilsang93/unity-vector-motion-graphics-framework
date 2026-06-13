@@ -50,23 +50,31 @@ namespace VMG.Core
                 s_nrm[i] = new Vector2(-d.y, d.x);
             }
 
-            // Build per-edge "ribbon" of two vertices at each end. Caps and
-            // joins are then emitted as separate geometry — adjacent edges
-            // never share vertices, so the join style is free to pick any
-            // bridge geometry.
+            // Build per-edge "ribbon" with a centerline rail so the SDF
+            // shader has a distance=1 anchor between two distance=0 edge
+            // rails. Each segment becomes 6 vertices (2 rails × 3 points
+            // per rail end) and 4 triangles. Adjacent segments don't share
+            // vertices so the join style is free to bridge them.
+            float centerOffset = (offsetPos + offsetNeg) * 0.5f;
             for (int seg = 0; seg < segCount; seg++)
             {
                 Vector2 a = path.nodes[seg].position;
                 Vector2 b = path.nodes[(seg + 1) % n].position;
                 Vector2 n0 = s_nrm[seg];
                 int v0 = mb.VertexCount;
-                mb.AddVertex(a + n0 * offsetPos, col);
-                mb.AddVertex(a + n0 * offsetNeg, col);
-                mb.AddVertex(b + n0 * offsetPos, col);
-                mb.AddVertex(b + n0 * offsetNeg, col);
-                // Quad (v0, v2, v3, v1) -> two triangles.
-                mb.AddTriangle(v0, v0 + 2, v0 + 3);
-                mb.AddTriangle(v0, v0 + 3, v0 + 1);
+                // Layout: 0=posA, 1=ctrA, 2=negA, 3=posB, 4=ctrB, 5=negB.
+                mb.AddVertex(a + n0 * offsetPos,    col, 0f);
+                mb.AddVertex(a + n0 * centerOffset, col, 1f);
+                mb.AddVertex(a + n0 * offsetNeg,    col, 0f);
+                mb.AddVertex(b + n0 * offsetPos,    col, 0f);
+                mb.AddVertex(b + n0 * centerOffset, col, 1f);
+                mb.AddVertex(b + n0 * offsetNeg,    col, 0f);
+                // Two quads — upper (pos↔center) and lower (center↔neg).
+                // Source CCW from +Z: posA→posB→ctrB→ctrA, ctrA→ctrB→negB→negA.
+                mb.AddTriangle(v0,     v0 + 3, v0 + 4);
+                mb.AddTriangle(v0,     v0 + 4, v0 + 1);
+                mb.AddTriangle(v0 + 1, v0 + 4, v0 + 5);
+                mb.AddTriangle(v0 + 1, v0 + 5, v0 + 2);
             }
 
             // Joins between consecutive edges.
@@ -140,12 +148,14 @@ namespace VMG.Core
             {
                 // Bend toward +normal side; +normal side is "inner" of bend,
                 // so the gap is on -normal side: bridge (negA, p, negB).
-                mb.AddVertex(negA, col); mb.AddVertex(p, col); mb.AddVertex(negB, col);
+                // p sits on the polyline (center of stroke) — distance=1;
+                // negA/negB sit on the outer rail — distance=0.
+                mb.AddVertex(negA, col, 0f); mb.AddVertex(p, col, 1f); mb.AddVertex(negB, col, 0f);
                 mb.AddTriangle(c, c + 1, c + 2);
             }
             else
             {
-                mb.AddVertex(posA, col); mb.AddVertex(posB, col); mb.AddVertex(p, col);
+                mb.AddVertex(posA, col, 0f); mb.AddVertex(posB, col, 0f); mb.AddVertex(p, col, 1f);
                 mb.AddTriangle(c, c + 1, c + 2);
             }
         }
@@ -204,7 +214,9 @@ namespace VMG.Core
             // (spike, outerB, p). Winding chosen so the wedge faces the same
             // way for either bend direction.
             int c = mb.VertexCount;
-            mb.AddVertex(outerA, col); mb.AddVertex(spike, col); mb.AddVertex(outerB, col); mb.AddVertex(p, col);
+            // outerA/spike/outerB sit on the outer rail (distance=0); p is
+            // the corner pivot on the polyline (distance=1).
+            mb.AddVertex(outerA, col, 0f); mb.AddVertex(spike, col, 0f); mb.AddVertex(outerB, col, 0f); mb.AddVertex(p, col, 1f);
             if (cross > 0f)
             {
                 mb.AddTriangle(c, c + 1, c + 3);
@@ -233,12 +245,14 @@ namespace VMG.Core
 
             int seg = Mathf.Max(2, RoundJoinSegments);
             int pivot = mb.VertexCount;
-            mb.AddVertex(p, col);
+            // Pivot at the polyline corner — distance=1; arc samples sit on
+            // the outer rail — distance=0.
+            mb.AddVertex(p, col, 1f);
             for (int s = 0; s <= seg; s++)
             {
                 float t = aStart + delta * (s / (float)seg);
                 Vector2 v = p + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r;
-                mb.AddVertex(v, col);
+                mb.AddVertex(v, col, 0f);
                 if (s > 0)
                 {
                     int last = pivot + s;
@@ -263,8 +277,11 @@ namespace VMG.Core
                 Vector2 extPos = vPos + outwardDir * ext;
                 Vector2 extNeg = vNeg + outwardDir * ext;
                 int c = mb.VertexCount;
-                mb.AddVertex(vPos, col); mb.AddVertex(extPos, col);
-                mb.AddVertex(extNeg, col); mb.AddVertex(vNeg, col);
+                // All four corners sit on the visible boundary — square caps
+                // extend the rectangle outward by half the stroke width, so
+                // every corner is at the outer rail. distance=0 across.
+                mb.AddVertex(vPos, col, 0f); mb.AddVertex(extPos, col, 0f);
+                mb.AddVertex(extNeg, col, 0f); mb.AddVertex(vNeg, col, 0f);
                 mb.AddTriangle(c, c + 1, c + 2);
                 mb.AddTriangle(c, c + 2, c + 3);
                 return;
@@ -284,11 +301,13 @@ namespace VMG.Core
 
             int seg = Mathf.Max(3, RoundCapSegments);
             int pivot = mb.VertexCount;
-            mb.AddVertex(center, col);
+            // Center of the cap disc sits on the polyline — distance=1; arc
+            // samples sit on the outer rail — distance=0.
+            mb.AddVertex(center, col, 1f);
             for (int s = 0; s <= seg; s++)
             {
                 float t = aStart + delta * (s / (float)seg);
-                mb.AddVertex(center + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r, col);
+                mb.AddVertex(center + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r, col, 0f);
                 if (s > 0)
                 {
                     int last = pivot + s + 1;

@@ -101,8 +101,13 @@ namespace VMG.World
             }
             else if (m_Renderer.sharedMaterial == null)
             {
-                // Default to Sprites/Default which understands vertex color.
-                var shader = Shader.Find("Sprites/Default");
+                // Default to the package's SDF-AA shader so vector edges
+                // antialias regardless of camera distance. Falls back to
+                // Sprites/Default if the shader was stripped out (e.g.
+                // missing Always Included entry in build settings) — the
+                // mesh still renders, just without AA.
+                var shader = Shader.Find("VMG/World/VectorSDF");
+                if (shader == null) shader = Shader.Find("Sprites/Default");
                 if (shader != null) m_Renderer.sharedMaterial = new Material(shader);
             }
         }
@@ -270,6 +275,7 @@ namespace VMG.World
                 dst.vertices.Add(src.vertices[i]);
                 dst.colors.Add(src.colors[i]);
                 dst.uvs.Add(src.uvs[i]);
+                dst.uv1s.Add(i < src.uv1s.Count ? src.uv1s[i] : new Vector2(1f, 0f));
             }
             // Carry normals only if both sides actually have a normal for
             // every vertex; otherwise drop them so ApplyTo skips SetNormals.

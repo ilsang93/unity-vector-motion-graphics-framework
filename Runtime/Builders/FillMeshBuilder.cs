@@ -27,7 +27,133 @@ namespace VMG.Core
             // ours to push into the mesh buffer.
             FillTessellator.Triangulate(s_poly, mb.triangles, firstVert);
             var emitted = FillTessellator.GetEmittedVertices();
-            for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col);
+            // Interior vertices: distance = 1 so the SDF shader keeps them
+            // fully opaque. The boundary ring emitted below carries the
+            // 1→0 ramp.
+            for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col, 1f);
+
+            // Outset AA ring along the original polyline. The interior side
+            // (distance=1) sits exactly on the polyline so it z-orders flush
+            // with the fill body; the outer side (distance=0) sits one
+            // outset-width outside. The SDF shader collapses this band to
+            // exactly the fwidth() of distance — i.e. 1 pixel — so the
+            // band width itself doesn't matter visually as long as it
+            // straddles the boundary.
+            EmitAaRing(s_poly, OutsetWidthFor(s_poly), col, mb);
+        }
+
+        // Boundary band width. Self-scaling against the polygon's larger
+        // dimension so very small shapes still get a band wide enough for
+        // the shader to interpolate, and large shapes don't blow out into
+        // visible "fuzz". 0.5% of the longer side is well below 1 pixel
+        // for any sane on-screen size at any sane zoom.
+        private static float OutsetWidthFor(List<Vector2> poly)
+        {
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var v = poly[i];
+                if (v.x < minX) minX = v.x;
+                if (v.y < minY) minY = v.y;
+                if (v.x > maxX) maxX = v.x;
+                if (v.y > maxY) maxY = v.y;
+            }
+            float d = Mathf.Max(maxX - minX, maxY - minY);
+            // Lower bound keeps the ring usable when the path is degenerate
+            // (e.g. a near-line trim result).
+            return Mathf.Max(d * 0.005f, 1e-4f);
+        }
+
+        // CCW polygons: left-normal points inward (so the fill is to the
+        // +normal side). The AA ring sits on the -normal (outward) side.
+        private static Vector2[] s_ringNrm = new Vector2[64];
+        private static Vector2[] EnsureNrmBuffer(int n)
+        {
+            if (s_ringNrm.Length < n) s_ringNrm = new Vector2[Mathf.NextPowerOfTwo(n)];
+            return s_ringNrm;
+        }
+
+        private static void EmitAaRing(List<Vector2> poly, float w, Color32 col, MeshBuffer mb)
+        {
+            int n = poly.Count;
+            if (n < 3 || w <= 0f) return;
+
+            var nrm = EnsureNrmBuffer(n);
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 a = poly[i];
+                Vector2 b = poly[(i + 1) % n];
+                Vector2 d = b - a;
+                float len = d.magnitude;
+                if (len < 1e-6f) { nrm[i] = Vector2.up; continue; }
+                d /= len;
+                nrm[i] = new Vector2(-d.y, d.x); // left-normal: inward for CCW
+            }
+
+            // Inner ring sits exactly on the polyline (distance=1, fully
+            // interior so the fill body and the ring agree on color). Outer
+            // ring sits offset along -normal by w (distance=0, fully
+            // transparent at the boundary). Two triangles per edge bridge
+            // them; corners get bevel triangles so the band doesn't gap.
+            //
+            // Per-edge emit (no sharing between edges) keeps the corner
+            // logic local — adjacent edges' outer rails generally don't
+            // meet exactly, so a per-vertex outer rail would have to solve
+            // the same miter/bevel decision the stroke builder does. The
+            // bevel triangles between edges cover the gap directly.
+            for (int seg = 0; seg < n; seg++)
+            {
+                Vector2 a = poly[seg];
+                Vector2 b = poly[(seg + 1) % n];
+                Vector2 nSeg = nrm[seg];
+                Vector2 outA = a - nSeg * w;
+                Vector2 outB = b - nSeg * w;
+
+                int v0 = mb.VertexCount;
+                mb.AddVertex(a, col, 1f);
+                mb.AddVertex(b, col, 1f);
+                mb.AddVertex(outB, col, 0f);
+                mb.AddVertex(outA, col, 0f);
+                // CCW polygon: -normal is outward. The quad (a, outA, outB,
+                // b) winds CCW from +Z (the viewing direction of the front
+                // face), so triangles (v0, v0+3, v0+2) and (v0, v0+2, v0+1).
+                mb.AddTriangle(v0, v0 + 3, v0 + 2);
+                mb.AddTriangle(v0, v0 + 2, v0 + 1);
+            }
+
+            // Corner gap-fillers: at each vertex P, the outer rails of the
+            // incoming and outgoing edges diverge by the angle between their
+            // normals. Cover the wedge with a single bevel triangle: (P,
+            // P-nA*w, P-nB*w). Winding chosen so the triangle faces +Z.
+            for (int v = 0; v < n; v++)
+            {
+                Vector2 p = poly[v];
+                int prev = (v - 1 + n) % n;
+                Vector2 nPrev = nrm[prev];
+                Vector2 nNext = nrm[v];
+                // Skip near-collinear vertices — the outer rails already
+                // meet, no wedge to fill.
+                float cross = nPrev.x * nNext.y - nPrev.y * nNext.x;
+                if (Mathf.Abs(cross) < 1e-4f) continue;
+                // cross > 0 (bend goes inward, i.e. +normal-ward): the
+                // outer rails diverge, gap is on the outer side.
+                // cross < 0 (bend outward): the outer rails overlap; the
+                // bevel triangle ends up degenerate but harmless.
+                Vector2 outPrev = p - nPrev * w;
+                Vector2 outNext = p - nNext * w;
+                int c = mb.VertexCount;
+                mb.AddVertex(p, col, 1f);
+                mb.AddVertex(outPrev, col, 0f);
+                mb.AddVertex(outNext, col, 0f);
+                // CCW polygon convex corner: cross > 0, outer rails diverge
+                // — wedge winds (p, outNext, outPrev) as CCW from +Z. The
+                // opposite sign means the rails overlap and the bevel
+                // triangle ends up degenerate; harmless and we don't have
+                // to special-case it.
+                if (cross > 0f) mb.AddTriangle(c, c + 2, c + 1);
+                else            mb.AddTriangle(c, c + 1, c + 2);
+            }
         }
 
         /// 3D extrusion of the fill polygon. Emits front face (normal +Z),

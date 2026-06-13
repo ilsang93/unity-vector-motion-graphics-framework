@@ -8,6 +8,11 @@ namespace VMG.Core
         public readonly List<Vector3> vertices = new List<Vector3>(256);
         public readonly List<Color32> colors = new List<Color32>(256);
         public readonly List<Vector2> uvs = new List<Vector2>(256);
+        // UV1.x carries the AA distance channel: 1 = fully interior, 0 = at
+        // the visible boundary. The SDF shader fades alpha across the
+        // fwidth(distance) band so edges land on the pixel grid regardless
+        // of zoom. UV1.y is reserved.
+        public readonly List<Vector2> uv1s = new List<Vector2>(256);
         public readonly List<Vector3> normals = new List<Vector3>(256);
         public readonly List<int> triangles = new List<int>(512);
 
@@ -16,6 +21,7 @@ namespace VMG.Core
             vertices.Clear();
             colors.Clear();
             uvs.Clear();
+            uv1s.Clear();
             normals.Clear();
             triangles.Clear();
         }
@@ -27,6 +33,17 @@ namespace VMG.Core
             vertices.Add(new Vector3(p.x, p.y, 0f));
             colors.Add(c);
             uvs.Add(p);
+            uv1s.Add(new Vector2(1f, 0f));
+        }
+
+        /// Add an interior or AA-ring vertex with explicit distance value.
+        /// distance: 1 = fully interior (opaque), 0 = at visible boundary.
+        public void AddVertex(Vector2 p, Color32 c, float distance)
+        {
+            vertices.Add(new Vector3(p.x, p.y, 0f));
+            colors.Add(c);
+            uvs.Add(p);
+            uv1s.Add(new Vector2(distance, 0f));
         }
 
         /// Add a vertex with an explicit Z and normal. Use when emitting
@@ -37,6 +54,7 @@ namespace VMG.Core
             vertices.Add(p);
             colors.Add(c);
             uvs.Add(uv);
+            uv1s.Add(new Vector2(1f, 0f));
             normals.Add(normal);
         }
 
@@ -59,6 +77,8 @@ namespace VMG.Core
             mesh.SetVertices(vertices);
             mesh.SetColors(colors);
             mesh.SetUVs(0, uvs);
+            if (uv1s.Count == vertices.Count && vertices.Count > 0)
+                mesh.SetUVs(1, uv1s);
             mesh.SetTriangles(triangles, 0);
             // Only push normals if every vertex got one — mixing extruded
             // and flat 2D geometry in one buffer leaves normals partial,
@@ -115,6 +135,7 @@ namespace VMG.Core
                 colors.Add(src.colors[i]);
                 uvs.Add(src.uvs[i]);
             }
+            for (int i = 0; i < src.uv1s.Count; i++) uv1s.Add(src.uv1s[i]);
             for (int i = 0; i < src.normals.Count; i++) normals.Add(src.normals[i]);
             for (int i = 0; i < src.triangles.Count; i++) triangles.Add(src.triangles[i]);
         }

@@ -42,6 +42,16 @@ namespace VMG.Animation.Core
         // tween in the animation has lazy values.
         public bool hasAnyFn;
 
+        // When true, startTime/endTime were set by the builder (Keyframes
+        // segment expansion) and EnsureFinalized must not overwrite them
+        // with the default [0, dur] window.
+        public bool hasExplicitSegment;
+
+        // When true, the segment carries its own ease override (set on the
+        // target keyframe). When false, EnsureFinalized fills in the
+        // animation-level ease so user-set .Ease() calls reach the segment.
+        public bool hasExplicitEase;
+
         // Skip-redundant-write cache, mirrors VMGClipTween.
         public bool hasLastValue;
         public float lastFloat;

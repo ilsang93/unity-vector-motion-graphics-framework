@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.27.0] - 2026-06-13
+
+Code-API parity with the DSL's `keyframes` block. The last asymmetry
+between `.vmgfx` scripts and the C# fluent builder closes with
+`VMGAnimate.Keyframes(...)`, completing the anime.js port at the
+code-API surface (Finding #2 from the 2026-06-13 usability review).
+
+### Added
+
+- **`VMGAnimate.Keyframes(path, ...)`.** CSS / anime.js-style multi-
+  stop animations on a single channel. Times are normalized to
+  `[0, 1]` across `.Duration()`; adjacent stops become FromTo
+  segments. Seven typed `params (float, T)[]` overloads plus seven
+  `VMGKeyframe<T>[]` overloads (the latter carry per-segment `Ease`
+  overrides). Call multiple times with different paths to animate
+  several channels in lock-step inside one animation.
+- **`VMGKeyframe<T>` struct.** `(time, value)` or
+  `(time, value, ease)` — `ease` follows the anime.js convention
+  ("ease applies to the segment ENDING at this frame"). The
+  animation-level `.Ease()` fills in any segment that doesn't carry
+  its own override, so a later `.Ease()` call still reaches plain
+  segments.
+
+### Internal
+
+- `VMGCodeTween` gains `hasExplicitSegment` and `hasExplicitEase`
+  flags. `VMGAnimate.EnsureFinalized` scales normalized
+  `[startTime, endTime]` into seconds for keyframe segments instead
+  of clobbering them with the default `[0, dur]` window. Non-
+  keyframe tweens are unchanged.
+
 ## [0.26.0] - 2026-06-13
 
 CSS importer end-to-end integration round. The 0.25.0 translator now

@@ -97,6 +97,60 @@ namespace VMG.Animation.Core
         public VMGAnimate FromTo(string path, Func<Vector3> from, Func<Vector3> to) => AddFnTween(path, VMGChannelType.Vector3, fromVector3Fn: from, toVector3Fn: to, hasFrom: true);
         public VMGAnimate FromTo(string path, Func<Vector4> from, Func<Vector4> to) => AddFnTween(path, VMGChannelType.Vector4, fromVector4Fn: from, toVector4Fn: to, hasFrom: true);
 
+        // ------- Keyframes API -------
+
+        // CSS / anime.js parity for multi-stop animations on a single channel.
+        // Times are normalized to [0, 1] across the iteration duration set by
+        // .Duration(). Adjacent keyframes become FromTo segments; gaps before
+        // the first key (time > 0) or after the last key are no-op holds. The
+        // segment's ease is taken from the *target* keyframe's Ease (anime.js
+        // convention — "ease applies to the segment ending at this frame"),
+        // falling back to the animation-level Ease() when null.
+        //
+        // Call multiple times with different paths to animate several channels
+        // in lock-step inside one animation.
+        public VMGAnimate Keyframes(string path, params (float time, float value)[] keys)
+            => AddKeyframes<float>(path, VMGChannelType.Float, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, int value)[] keys)
+            => AddKeyframes<int>(path, VMGChannelType.Int, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, bool value)[] keys)
+            => AddKeyframes<bool>(path, VMGChannelType.Bool, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, Color value)[] keys)
+            => AddKeyframes<Color>(path, VMGChannelType.Color, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, Vector2 value)[] keys)
+            => AddKeyframes<Vector2>(path, VMGChannelType.Vector2, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, Vector3 value)[] keys)
+            => AddKeyframes<Vector3>(path, VMGChannelType.Vector3, Promote(keys));
+        public VMGAnimate Keyframes(string path, params (float time, Vector4 value)[] keys)
+            => AddKeyframes<Vector4>(path, VMGChannelType.Vector4, Promote(keys));
+
+        // VMGKeyframe<T> overloads — use when you need per-segment ease
+        // overrides. The plain tuple overloads above are sufficient when
+        // every segment shares the animation-level ease.
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<float>[] keys)
+            => AddKeyframes<float>(path, VMGChannelType.Float, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<int>[] keys)
+            => AddKeyframes<int>(path, VMGChannelType.Int, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<bool>[] keys)
+            => AddKeyframes<bool>(path, VMGChannelType.Bool, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<Color>[] keys)
+            => AddKeyframes<Color>(path, VMGChannelType.Color, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<Vector2>[] keys)
+            => AddKeyframes<Vector2>(path, VMGChannelType.Vector2, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<Vector3>[] keys)
+            => AddKeyframes<Vector3>(path, VMGChannelType.Vector3, keys);
+        public VMGAnimate Keyframes(string path, params VMGKeyframe<Vector4>[] keys)
+            => AddKeyframes<Vector4>(path, VMGChannelType.Vector4, keys);
+
+        static VMGKeyframe<T>[] Promote<T>((float time, T value)[] keys)
+        {
+            if (keys == null) return null;
+            var dst = new VMGKeyframe<T>[keys.Length];
+            for (int i = 0; i < keys.Length; i++)
+                dst[i] = new VMGKeyframe<T>(keys[i].time, keys[i].value);
+            return dst;
+        }
+
         // ------- MotionPath API -------
 
         // Follow an arc-length parametrized curve. The target's
@@ -450,6 +504,100 @@ namespace VMG.Animation.Core
             };
         }
 
+        // Expand a multi-stop keyframes spec into per-adjacent-pair FromTo
+        // segment tweens. Times are normalized to [0, 1] at authoring time;
+        // we stamp them with explicit startTime/endTime in seconds inside
+        // EnsureFinalized so the [0, dur] reset doesn't clobber them.
+        VMGAnimate AddKeyframes<T>(string path, VMGChannelType type, VMGKeyframe<T>[] keys)
+        {
+            if (m_Finalized)
+            {
+                Debug.LogError($"[VMG.Animation] cannot add tween '{path}' after the animation is finalized");
+                return this;
+            }
+            if (keys == null || keys.Length < 2)
+            {
+                Debug.LogError($"[VMG.Animation] .Keyframes('{path}') needs at least 2 keyframes");
+                return this;
+            }
+            // Sort by time. We mutate a copy so callers' arrays stay intact.
+            var sorted = new VMGKeyframe<T>[keys.Length];
+            System.Array.Copy(keys, sorted, keys.Length);
+            System.Array.Sort(sorted, (a, b) => a.Time.CompareTo(b.Time));
+
+            for (int i = 1; i < sorted.Length; i++)
+            {
+                var prev = sorted[i - 1];
+                var cur = sorted[i];
+                if (cur.Time <= prev.Time) continue; // skip degenerate / duplicate stops
+                var tween = BuildSegmentTween(path, type, prev.Value, cur.Value);
+                if (tween == null) return this;
+                tween.hasExplicitSegment = true;
+                tween.startTime = Mathf.Clamp01(prev.Time);
+                tween.endTime = Mathf.Clamp01(cur.Time);
+                // Ease per anime.js parity: target frame's override wins. If
+                // neither side declares one, EnsureFinalized fills in the
+                // animation-level ease (so a later .Ease() call still reaches
+                // un-decorated segments).
+                if (cur.Ease.HasValue)
+                {
+                    tween.ease = cur.Ease.Value;
+                    tween.hasExplicitEase = true;
+                }
+                else if (prev.Ease.HasValue)
+                {
+                    tween.ease = prev.Ease.Value;
+                    tween.hasExplicitEase = true;
+                }
+                tween.hasFrom = true; // explicit from supplied
+                m_PendingTweens.Add(tween);
+            }
+            return this;
+        }
+
+        VMGCodeTween BuildSegmentTween<T>(string path, VMGChannelType type, T from, T to)
+        {
+            switch (type)
+            {
+                case VMGChannelType.Float:
+                {
+                    float f = (float)(object)from, t = (float)(object)to;
+                    return BuildTween(path, type, true, f, t, 0, 0, false, false, default, default, default, default);
+                }
+                case VMGChannelType.Int:
+                {
+                    int f = (int)(object)from, t = (int)(object)to;
+                    return BuildTween(path, type, true, 0, 0, f, t, false, false, default, default, default, default);
+                }
+                case VMGChannelType.Bool:
+                {
+                    bool f = (bool)(object)from, t = (bool)(object)to;
+                    return BuildTween(path, type, true, 0, 0, 0, 0, f, t, default, default, default, default);
+                }
+                case VMGChannelType.Color:
+                {
+                    Color f = (Color)(object)from, t = (Color)(object)to;
+                    return BuildTween(path, type, true, 0, 0, 0, 0, false, false, f, t, default, default);
+                }
+                case VMGChannelType.Vector2:
+                {
+                    Vector2 f = (Vector2)(object)from, t = (Vector2)(object)to;
+                    return BuildTween(path, type, true, 0, 0, 0, 0, false, false, default, default, f, t);
+                }
+                case VMGChannelType.Vector3:
+                {
+                    Vector3 f = (Vector3)(object)from, t = (Vector3)(object)to;
+                    return BuildTween(path, type, true, 0, 0, 0, 0, false, false, default, default, f, t);
+                }
+                case VMGChannelType.Vector4:
+                {
+                    Vector4 f = (Vector4)(object)from, t = (Vector4)(object)to;
+                    return BuildTween(path, type, true, 0, 0, 0, 0, false, false, default, default, f, t);
+                }
+            }
+            return null;
+        }
+
         // Lock the animation shape. Called automatically by any handle/modifier
         // method that needs the underlying VMGAnimation in its final form.
         // Idempotent.
@@ -470,9 +618,22 @@ namespace VMG.Animation.Core
             var ease = m_HasEase ? m_Ease : VMGEase.From(VMGEasingPreset.Ease);
             foreach (var t in m_PendingTweens)
             {
-                t.startTime = 0f;
-                t.endTime = dur;
-                t.ease = ease;
+                if (t.hasExplicitSegment)
+                {
+                    // Keyframes segments: startTime/endTime hold normalized
+                    // positions in [0, 1]; scale them into seconds against
+                    // the iteration window. Per-segment ease overrides win,
+                    // otherwise fall back to the animation-level ease.
+                    t.startTime = Mathf.Clamp01(t.startTime) * dur;
+                    t.endTime = Mathf.Clamp01(t.endTime) * dur;
+                    if (!t.hasExplicitEase) t.ease = ease;
+                }
+                else
+                {
+                    t.startTime = 0f;
+                    t.endTime = dur;
+                    t.ease = ease;
+                }
                 t.owner = m_Anim;
                 m_Anim.tweens.Add(t);
             }

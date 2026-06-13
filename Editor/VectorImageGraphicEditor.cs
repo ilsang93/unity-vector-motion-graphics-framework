@@ -39,7 +39,7 @@ namespace VMG.EditorTools
             serializedObject.Update();
 
             EditorGUILayout.PropertyField(m_FitToRect);
-            EditorGUILayout.PropertyField(m_SvgAsset);
+            SvgAssetSlotGUI.Draw(m_SvgAsset);
 
             bool hasSvg = m_SvgAsset.objectReferenceValue != null;
             using (new EditorGUI.DisabledScope(hasSvg))

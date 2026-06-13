@@ -12,7 +12,7 @@ namespace VMG.EditorTools
     // importer solves the same problem by passing the contested extension
     // as `overrideExts` rather than `ext` — Unity then treats this importer
     // as an explicit override of the built-in one.
-    [ScriptedImporter(version: 3, exts: null, overrideExts: new[] { "svg" }, AllowCaching = true)]
+    [ScriptedImporter(version: 5, exts: null, overrideExts: new[] { "svg" }, AllowCaching = true)]
     public sealed class SvgScriptedImporter : ScriptedImporter
     {
         [Tooltip("Flip Y so SVG (top-down) maps cleanly to UGUI (bottom-up). " +

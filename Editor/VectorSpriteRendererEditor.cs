@@ -48,7 +48,7 @@ namespace VMG.EditorTools
         {
             serializedObject.Update();
 
-            EditorGUILayout.PropertyField(m_SvgAsset);
+            SvgAssetSlotGUI.Draw(m_SvgAsset);
             EditorGUILayout.PropertyField(m_SvgUnitsPerWorldUnit);
 
             bool hasSvg = m_SvgAsset.objectReferenceValue != null;

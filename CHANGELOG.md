@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.33.0] - 2026-06-14
+
+SVG importer round + Billboard component. The SVG parser learns
+`<defs>` / `<use>` / `<symbol>` inlining and `<style>` class
+selectors — Figma exports that reuse shapes via `<use>` or
+style elements via CSS classes now import correctly. A drag-and-drop
+"sidecar" workflow on renderer slots lets `.svg` files coexist with
+Unity 6's built-in SVG importer instead of fighting it for the
+extension. `VMGBillboard` ships as the package's first utility
+component: a GameObject keeps facing the active camera (or a
+Transform) under three rotation modes, with edit-mode preview.
+
+### Added
+
+- **SVG `<defs>` + `<use>` inlining.** The parser now resolves
+  `<use href="#id">` against `<defs>` and `<symbol>` definitions,
+  inheriting the use site's transform, style, and `x`/`y` offset.
+  Forward references work because the document is loaded into a
+  DOM before walking.
+- **SVG `<symbol>` support.** Treated as a definition container
+  whose children are instanced by `<use>`.
+- **Cycle detection** for pathological `<use>` chains — broken with
+  a `Debug.LogWarning` rather than a stack overflow.
+- **SVG `<style>` class-selector matching.** A tiny CSS parser
+  reads `.class { ... }` blocks (including `.a, .b` selector lists)
+  from inline `<style>` elements. Properties resolved: fill,
+  fill-opacity, stroke, stroke-opacity, stroke-width,
+  stroke-linecap, stroke-linejoin, opacity. No specificity, no
+  `!important`, no compound/descendant/pseudo selectors.
+- **Style precedence** matches the SVG spec: inherited → class
+  rule → presentation attribute → inline `style="..."` (later
+  overrides earlier).
+- **SVG sidecar workflow.** Drop a `.svg` file directly onto the
+  `SvgAsset` slot of `VectorImageGraphic` or `VectorSpriteRenderer`
+  — a sibling `<name>.vmgshape.asset` is generated automatically
+  and assigned. Editing the `.svg` keeps the sidecar in sync via
+  an `AssetPostprocessor`. Coexists with Unity 6's built-in
+  `SVGImporter` (which keeps the `.svg` extension for Sprite /
+  VectorImage usage) instead of fighting it.
+- **`VMGBillboard` component** (`VMG/Billboard` menu) in the new
+  `Runtime/Utility/` folder. Single component, nullable slots
+  determine mode: `TargetTransform` set → follow Transform; else
+  `TargetCamera` → that camera; else auto (Camera.main →
+  SceneView camera in edit mode → any active camera).
+  - Three rotation modes: `Full` (screen-aligned, default),
+    `YAxis` (signboard — Y-only rotation), `ZAxis` (2D marker —
+    Z-only rotation).
+  - `FaceAxis` enum (Z+/Z-/Y+/Y-/X+/X-) for meshes whose front
+    isn't +Z.
+  - `TiltOffset: Vector3` for keyframable wobble on top of
+    alignment.
+  - `[ExecuteAlways]` + `OnRenderObject` re-apply for live
+    SceneView preview during edit mode.
+  - One-shot `Debug.LogWarning` when the parent chain has
+    non-uniform scale (alignment would shear).
+
+### Changed
+
+- **SVG parser internals rewritten** from `XmlReader` streaming to
+  `XmlDocument` DOM. Required for forward `<use>` references and
+  the `<style>` pre-pass. Public `SvgDocumentParser.Parse(string)
+  → VMGShapeAsset` signature unchanged.
+- **`SvgScriptedImporter` version 3 → 5** to invalidate any cached
+  `.svg` imports from the old parser.
+- `IgnoreWhitespace` flipped `true → false` on the XML reader
+  settings so `<style>` text content survives the DOM load.
+
 ## [0.32.0] - 2026-06-14
 
 Track Groups round. User-defined composition groups arrive in the

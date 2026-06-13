@@ -53,6 +53,8 @@ namespace VMG.EditorTools.Animation
             Selection.selectionChanged += OnSelectionChanged;
             VMGTimelineSelection.Changed += OnTimelineSelectionChanged;
             VMGTimelineSelection.DataChanged += OnTimelineSelectionChanged;
+            // Needed for key/row hover halo and tooltips.
+            wantsMouseMove = true;
         }
 
         void OnDisable()
@@ -82,6 +84,10 @@ namespace VMG.EditorTools.Animation
 
         void OnGUI()
         {
+            // wantsMouseMove fires MouseMove but does not auto-repaint — we
+            // need a Repaint to refresh the hover halo.
+            if (Event.current.type == EventType.MouseMove) Repaint();
+
             EnsureRuntime();
             if (m_Animator == null)
             {

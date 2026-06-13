@@ -31,6 +31,11 @@ namespace VMG.EditorTools.Animation
             foreach (var c in current.GetComponents<MonoBehaviour>())
             {
                 if (c == null) continue;
+                // Never expose VMGAnimator's own serialized fields (progress,
+                // speed, mode flags …) — recording or keying them would feed
+                // the playhead into the playhead and trip the system. The
+                // user can never sensibly want a self-driven animator.
+                if (c is VMG.Animation.VMGAnimator) continue;
                 var type = c.GetType();
                 string compLabel = type.Name;
                 string compTypeName = type.AssemblyQualifiedName;

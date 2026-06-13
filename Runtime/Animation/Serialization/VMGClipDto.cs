@@ -10,7 +10,6 @@ namespace VMG.Animation.Serialization
         public string formatVersion = "1";
         public float duration;
         public bool loop;
-        public bool autoFitDuration = true;
         public int snapDivisor = 60;
         public List<VMGTrackDto> tracks = new List<VMGTrackDto>();
         public List<VMGEventDto> events = new List<VMGEventDto>();

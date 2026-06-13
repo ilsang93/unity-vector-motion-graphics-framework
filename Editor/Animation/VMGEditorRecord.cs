@@ -206,7 +206,7 @@ namespace VMG.EditorTools.Animation
             }
             if (changed)
             {
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
                 foreach (var ed in Resources.FindObjectsOfTypeAll<VMGAnimatorEditor>()) ed.Repaint();
                 foreach (var w in Resources.FindObjectsOfTypeAll<VMGTimelineWindow>()) w.Repaint();

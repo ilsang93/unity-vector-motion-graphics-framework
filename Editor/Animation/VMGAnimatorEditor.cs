@@ -1,3 +1,4 @@
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 using VMG.Animation;
@@ -7,6 +8,16 @@ namespace VMG.EditorTools.Animation
     [CustomEditor(typeof(VMGAnimator))]
     public class VMGAnimatorEditor : Editor
     {
+        // Minimal but valid `animate` statement so the new script runs without
+        // a parser error and shows up in Timeline after assignment. Newline
+        // pattern matches CSS-importer output for visual consistency.
+        const string k_VmgFxStarter =
+            "# New VMGFx script.\n" +
+            "# Reference any child GameObject by name, or 'self' for this one.\n" +
+            "# Field paths follow Unity component members (e.g. localPosition.y).\n" +
+            "\n" +
+            "animate self localPosition.y -> 1 duration=1 ease=outQuad\n";
+
         SerializedProperty m_Clip;
         SerializedProperty m_Script;
         SerializedProperty m_Mode;
@@ -27,9 +38,6 @@ namespace VMG.EditorTools.Animation
         static readonly GUIContent k_IsReadyLabel = new GUIContent("Is Ready");
         static readonly GUIContent k_IsPlayingLabel = new GUIContent("Is Playing");
 
-        VMGTimelineView m_Timeline;
-        VMGEditorPlayback m_Playback;
-
         void OnEnable()
         {
             m_Clip = serializedObject.FindProperty(nameof(VMGAnimator.clip));
@@ -40,11 +48,6 @@ namespace VMG.EditorTools.Animation
             m_FireEventsInExternalMode = serializedObject.FindProperty(nameof(VMGAnimator.fireEventsInExternalMode));
             m_PlayOnEnable = serializedObject.FindProperty(nameof(VMGAnimator.playOnEnable));
             m_LoopScript = serializedObject.FindProperty(nameof(VMGAnimator.loopScript));
-            m_Timeline = new VMGTimelineView();
-            m_Playback = new VMGEditorPlayback();
-            m_Playback.Bind((VMGAnimator)target);
-            var rec = VMGEditorRecord.For((VMGAnimator)target);
-            if (rec != null) m_Playback.Record = rec;
             VMGTimelineSelection.Changed += OnSelectionChanged;
             VMGTimelineSelection.DataChanged += OnSelectionChanged;
         }
@@ -53,7 +56,6 @@ namespace VMG.EditorTools.Animation
         {
             VMGTimelineSelection.Changed -= OnSelectionChanged;
             VMGTimelineSelection.DataChanged -= OnSelectionChanged;
-            if (m_Playback != null) m_Playback.Unbind();
         }
 
         void OnSelectionChanged()
@@ -70,6 +72,7 @@ namespace VMG.EditorTools.Animation
             DrawScriptSection();
             EditorGUILayout.Space();
             DrawClipSection();
+            DrawEmptyStateCreateBar(animator);
             EditorGUILayout.Space();
             DrawPlaybackSection();
             EditorGUILayout.Space();
@@ -90,6 +93,111 @@ namespace VMG.EditorTools.Animation
             }
         }
 
+        void DrawEmptyStateCreateBar(VMGAnimator animator)
+        {
+            // Surfaced only when neither authoring slot is filled — first-run
+            // affordance to avoid the "what now?" dead end.
+            if (m_Script.objectReferenceValue != null) return;
+            if (m_Clip.objectReferenceValue != null) return;
+
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox("No script or clip assigned. Create one to start authoring.", MessageType.Info);
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent("Create new VMGFx…", "Create a starter .vmgfx text file and assign it to Script."), EditorStyles.miniButton))
+            {
+                CreateNewVmgFx(animator);
+                GUIUtility.ExitGUI();
+            }
+            if (GUILayout.Button(new GUIContent("Create new Clip…", "Create an empty VMGAnimationClip asset and assign it to Clip."), EditorStyles.miniButton))
+            {
+                CreateNewClip(animator);
+                GUIUtility.ExitGUI();
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        static string GuessDefaultDirectory(VMGAnimator animator)
+        {
+            // Prefer the animator's own asset folder (prefab instances and
+            // saved prefabs both surface a sane path). Falls back to Assets/.
+            var go = animator != null ? animator.gameObject : null;
+            string path = go != null ? UnityEditor.AssetDatabase.GetAssetPath(go) : null;
+            if (!string.IsNullOrEmpty(path))
+            {
+                string dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) return dir.Replace('\\', '/');
+            }
+            return "Assets";
+        }
+
+        void CreateNewVmgFx(VMGAnimator animator)
+        {
+            string dir = GuessDefaultDirectory(animator);
+            string defaultName = (animator != null ? animator.name : "New") + ".vmgfx";
+            string fullPath = EditorUtility.SaveFilePanel("Create new VMGFx", dir, defaultName, "vmgfx");
+            if (string.IsNullOrEmpty(fullPath)) return;
+            if (!TryMakeProjectRelative(fullPath, out string assetPath))
+            {
+                EditorUtility.DisplayDialog("VMG", "File must be saved inside the project's Assets or Packages folder.", "OK");
+                return;
+            }
+            try
+            {
+                File.WriteAllText(fullPath, k_VmgFxStarter);
+            }
+            catch (System.Exception ex)
+            {
+                EditorUtility.DisplayDialog("VMG", $"Failed to write file:\n{ex.Message}", "OK");
+                return;
+            }
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceSynchronousImport);
+            var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
+            if (asset == null)
+            {
+                EditorUtility.DisplayDialog("VMG", "VMGFx file was created but could not be loaded as a TextAsset.", "OK");
+                return;
+            }
+            // Route through SerializedProperty so Undo + dirtying go through
+            // the inspector's standard path.
+            serializedObject.Update();
+            m_Script.objectReferenceValue = asset;
+            serializedObject.ApplyModifiedProperties();
+        }
+
+        void CreateNewClip(VMGAnimator animator)
+        {
+            string dir = GuessDefaultDirectory(animator);
+            string defaultName = (animator != null ? animator.name : "New") + "Clip.asset";
+            string fullPath = EditorUtility.SaveFilePanel("Create new VMG Animation Clip", dir, defaultName, "asset");
+            if (string.IsNullOrEmpty(fullPath)) return;
+            if (!TryMakeProjectRelative(fullPath, out string assetPath))
+            {
+                EditorUtility.DisplayDialog("VMG", "Asset must be saved inside the project's Assets or Packages folder.", "OK");
+                return;
+            }
+            assetPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
+            var clip = ScriptableObject.CreateInstance<VMGAnimationClip>();
+            AssetDatabase.CreateAsset(clip, assetPath);
+            AssetDatabase.SaveAssets();
+            serializedObject.Update();
+            m_Clip.objectReferenceValue = clip;
+            serializedObject.ApplyModifiedProperties();
+        }
+
+        static bool TryMakeProjectRelative(string fullPath, out string projectRelative)
+        {
+            projectRelative = null;
+            if (string.IsNullOrEmpty(fullPath)) return false;
+            string norm = fullPath.Replace('\\', '/');
+            string projectRoot = Application.dataPath.Substring(0, Application.dataPath.Length - "Assets".Length).Replace('\\', '/');
+            if (!norm.StartsWith(projectRoot)) return false;
+            string rel = norm.Substring(projectRoot.Length);
+            // Accept paths under Assets/ or Packages/.
+            if (!rel.StartsWith("Assets/") && !rel.StartsWith("Packages/")) return false;
+            projectRelative = rel;
+            return true;
+        }
+
         void DrawClipSection()
         {
             using (new EditorGUI.DisabledScope(m_Script.objectReferenceValue != null))
@@ -101,15 +209,15 @@ namespace VMG.EditorTools.Animation
                 if (clip != null)
                 {
                     var clipSo = new SerializedObject(clip);
-                    var durationProp = clipSo.FindProperty("duration");
                     var loopProp = clipSo.FindProperty("loop");
-                    var autoFitProp = clipSo.FindProperty("autoFitDuration");
                     var snapProp = clipSo.FindProperty("snapDivisor");
                     clipSo.Update();
-                    EditorGUILayout.PropertyField(autoFitProp, new GUIContent("Auto-fit Duration"));
-                    using (new EditorGUI.DisabledScope(autoFitProp.boolValue))
+                    // Duration is always derived from the latest key/event
+                    // time — show read-only. Extend it by dragging the last
+                    // key further right in the timeline view.
+                    using (new EditorGUI.DisabledScope(true))
                     {
-                        EditorGUILayout.PropertyField(durationProp, new GUIContent("Duration (s)"));
+                        EditorGUILayout.FloatField(new GUIContent("Duration (s)", "Read-only. Equals the time of the latest key or event. Extend by dragging keys past the current end."), clip.duration);
                     }
                     EditorGUILayout.PropertyField(loopProp, new GUIContent("Loop"));
                     EditorGUILayout.PropertyField(snapProp, new GUIContent("Snap (per second)"));
@@ -163,15 +271,18 @@ namespace VMG.EditorTools.Animation
                 EditorGUILayout.HelpBox("Assign a VMGAnimationClip to edit tracks.", MessageType.Info);
                 return;
             }
-            m_Playback.Bind(animator);
-            m_Timeline.Playback = m_Playback;
 
+            // The full timeline now lives in VMGTimelineWindow only.
+            // Inspector embed was removed because (a) it duplicated state
+            // with the floating window, and (b) inspector focus changes
+            // tore down the embed mid-interaction. The single source of
+            // truth for keyframe editing is the window — the inspector
+            // just opens / focuses it and shows the selected-key editor.
             bool windowOpen = VMGTimelineWindow.IsOpenFor(animator);
-
             EditorGUILayout.BeginHorizontal();
             if (!windowOpen)
             {
-                if (GUILayout.Button("Open in Window", EditorStyles.miniButton, GUILayout.Width(120f)))
+                if (GUILayout.Button("Open Timeline Window", EditorStyles.miniButton, GUILayout.Width(160f)))
                 {
                     VMGTimelineWindow.OpenFor(animator);
                 }
@@ -185,19 +296,6 @@ namespace VMG.EditorTools.Animation
                 }
             }
             EditorGUILayout.EndHorizontal();
-
-            var record = VMGEditorRecord.For(animator);
-            if (record != null)
-            {
-                m_Playback.Record = record;
-                record.DrawControls();
-            }
-
-            if (!windowOpen)
-            {
-                m_Playback.DrawControls();
-                m_Timeline.Draw(animator);
-            }
 
             var selection = VMGTimelineSelection.For(animator);
             VMGTrackKeyEditor.Draw(animator, selection);

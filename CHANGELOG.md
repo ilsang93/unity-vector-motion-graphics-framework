@@ -1,5 +1,104 @@
 # Changelog
 
+## [0.28.0] - 2026-06-13
+
+Timeline editor UX polish round. Visual language aligned with
+Unity's Animation window for transfer of muscle memory, autoFit
+removed in favor of a visible-window model that always permits
+extending past the current end, group rows folded over the GO +
+component dimension, and a first-run empty-state affordance to
+remove the "what now?" dead-end. Self-channels on the VMGAnimator
+itself are now blocked at the channel builder so they can't be
+recorded or keyed by accident.
+
+### Added
+
+- **Diamond key glyph + Unity-style palette.** Keys render as
+  diamonds with a 1px outline; white = idle, blue = selected, yellow
+  = recording. White hover halo follows the cursor (matches Unity
+  Animation's hover convention).
+- **Banded track rows + row hover highlight.** Trivially improves
+  readability when the clip has more than a handful of tracks.
+- **Ruler frame / seconds toggle.** Default unit is frames, derived
+  from `VMGAnimationClip.snapDivisor` (60 → 60fps). A small `f` / `s`
+  button in the ruler gutter switches modes; choice persists per-
+  window via EditorPrefs. snapDivisor = 0 forces seconds. Tick
+  density follows zoom; minor ticks auto-hide when too dense.
+- **Group rows.** Tracks fold under group headers keyed by
+  `gameObjectPath + componentTypeName`. Headers carry the GO path
+  and short component name, draw bold on a darker band, take a ▶/▼
+  caret, and show half-sized summary diamonds for the hidden child
+  keys while collapsed. Collapse state is per-clip and lives in
+  memory only (re-opening the window starts everything expanded).
+  `self` GameObject groups label as `<self>`.
+- **Right-click menus regrouped.** Track context menu now reads
+  Add → Clipboard (Copy / Paste / Delete) → Track, separators between
+  sections.
+- **Visible-window with headroom.** When zoomed out past Fit, the
+  ruler/grid/snap-grid extend past `duration` into a dimmed
+  "headroom" band. Dragging a key into the headroom extends
+  `duration` automatically on MouseUp. Fit zoom still targets the
+  exact clip duration. Single-key drag clamps at the visible-window
+  end; multi-key drag is delta-based and unclamped (Unity Animation
+  parity).
+- **Empty-state Create buttons.** When both `script` and `clip`
+  slots are empty, the inspector shows two buttons:
+  `Create new VMGFx…` writes a starter `.vmgfx` (3-line comment + one
+  valid `animate` statement) and assigns it; `Create new Clip…`
+  creates an empty `VMGAnimationClip` asset and assigns it. Both
+  use `SaveFilePanel` and validate the path lives under Assets/
+  or Packages/.
+
+### Changed
+
+- **`VMGAnimationClip.duration` is always derived.** The
+  `autoFitDuration` toggle is gone — duration tracks the latest key
+  or event time exactly, with no minimum floor (sub-second clips are
+  representable). Empty clips fall back to `EmptyClipDuration = 1f`
+  so the timeline view doesn't collapse before the first key. The
+  inspector shows Duration as a read-only field; extending the clip
+  is done by dragging the last key further right (zoom out first if
+  there's no headroom).
+- **Inspector Timeline embed removed.** The full timeline now lives
+  exclusively in `VMGTimelineWindow`. The animator inspector shows
+  an "Open Timeline Window" / "Focus Window" button and the
+  selected-key editor (`VMGTrackKeyEditor`), nothing else. Removing
+  the embed eliminates the duplicated state path that tore down
+  mid-interaction when inspector focus changed.
+- **`VMGAnimationClip.MinAutoDuration` renamed to
+  `EmptyClipDuration`** and only applies when no keys or events
+  exist.
+- **`VMGAnimationClip.RecalculateDurationIfAuto` renamed to
+  `RecalculateDuration`** and is unconditional. All editor mutation
+  paths already called the previous method, so callers update
+  one-for-one.
+
+### Removed
+
+- **`VMGAnimationClip.autoFitDuration` field** (and its serialized
+  DTO counterpart). 1.0 hasn't shipped yet, so the schema break is
+  taken now rather than carrying a vestigial flag. Existing JSON
+  containing the field is ignored by Unity's JsonUtility.
+
+### Fixed
+
+- **VMGAnimator's own serialized fields are no longer offered as
+  animation channels.** `VMGChannelTreeBuilder` skips
+  `VMGAnimator` MonoBehaviour instances, so the channel picker and
+  the editor recorder both stop exposing `progress`, `speed`, mode
+  flags, etc. Recording while moving the inspector's Progress slider
+  no longer creates self-feedback keys.
+
+### Internal
+
+- New `Row` flatten structure inside `VMGTimelineView`; HitTest,
+  hover, and rubber-band selection all route through
+  flattened-row ↔ trackIdx mapping. Group headers are excluded from
+  lasso selection by construction.
+- `VMGTimelineWindow` sets `wantsMouseMove = true` and repaints on
+  MouseMove so the key hover halo refreshes while the cursor is
+  parked on a key.
+
 ## [0.27.0] - 2026-06-13
 
 Code-API parity with the DSL's `keyframes` block. The last asymmetry

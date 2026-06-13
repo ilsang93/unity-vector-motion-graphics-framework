@@ -40,7 +40,9 @@ namespace VMG.EditorTools.Animation
 
             EditorGUI.BeginChangeCheck();
             float newTime = EditorGUILayout.FloatField("Time (s)", key.time);
-            newTime = Mathf.Clamp(newTime, 0f, Mathf.Max(0f, clip.duration));
+            // Clip duration is derived from the latest key — clamping the
+            // input against it would freeze the *last* key. Only floor at 0.
+            newTime = Mathf.Max(0f, newTime);
 
             DrawValueField(track.type, ref key);
 
@@ -55,7 +57,7 @@ namespace VMG.EditorTools.Animation
                 key.inTangent = inT;
                 track.keys[selection.keyIndex] = key;
                 SortKeysByTime(track, ref selection);
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
             }
 
@@ -67,7 +69,7 @@ namespace VMG.EditorTools.Animation
                 Undo.RecordObject(clip, "Delete VMG Key");
                 track.keys.RemoveAt(selection.keyIndex);
                 selection.Clear();
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
             }
             EditorGUILayout.EndHorizontal();
@@ -96,7 +98,7 @@ namespace VMG.EditorTools.Animation
                 clip.events.Sort((a, b) => a.time.CompareTo(b.time));
                 for (int i = 0; i < clip.events.Count; i++)
                     if (clip.events[i] == ev) { selection.SelectEvent(i); break; }
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
             }
 
@@ -121,7 +123,7 @@ namespace VMG.EditorTools.Animation
                 Undo.RecordObject(clip, "Delete VMG Event");
                 clip.events.RemoveAt(idx);
                 selection.ClearEvent();
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
             }
         }
@@ -232,7 +234,7 @@ namespace VMG.EditorTools.Animation
                         if (ki >= 0 && ki < tr.keys.Count) tr.keys.RemoveAt(ki);
                 }
                 selection.Clear();
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
             }
         }

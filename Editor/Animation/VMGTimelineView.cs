@@ -11,28 +11,35 @@ namespace VMG.EditorTools.Animation
         const float k_RowHeight = 22f;
         const float k_RulerHeight = 18f;
         const float k_EventRowHeight = 18f;
-        const float k_KeyRadius = 4f;
+        const float k_KeyHalfWidth = 5f;   // diamond half-width (px)
+        const float k_KeyHalfHeight = 6f;  // diamond half-height (px)
         const float k_KeyHitRadius = 8f;
         const float k_RightPad = 10f;
 
+        // Unity Animation-window-style palette.
         static readonly Color k_BgColor = new Color(0.18f, 0.18f, 0.18f, 1f);
-        static readonly Color k_AltRowColor = new Color(1f, 1f, 1f, 0.03f);
+        static readonly Color k_AltRowColor = new Color(1f, 1f, 1f, 0.035f);
+        static readonly Color k_RowHoverColor = new Color(1f, 1f, 1f, 0.05f);
         static readonly Color k_RulerColor = new Color(0.22f, 0.22f, 0.22f, 1f);
         static readonly Color k_GridColor = new Color(1f, 1f, 1f, 0.08f);
+        static readonly Color k_GridMinorColor = new Color(1f, 1f, 1f, 0.04f);
         static readonly Color k_SnapGridColor = new Color(1f, 1f, 1f, 0.04f);
         const float k_MinSnapGridPixels = 6f;
         static readonly Color k_BorderColor = new Color(0f, 0f, 0f, 0.6f);
-        static readonly Color k_KeyColor = new Color(1f, 0.85f, 0.3f, 1f);
-        static readonly Color k_KeySelectedColor = new Color(1f, 1f, 1f, 1f);
-        static readonly Color k_KeyOutline = new Color(0f, 0f, 0f, 0.7f);
-        static readonly Color k_KeySelectedOutline = new Color(1f, 0.45f, 0.05f, 1f);
-        const float k_KeySelectedOutlineRadius = 3f;
-        static readonly Color k_TrackSelectedColor = new Color(1f, 0.45f, 0.05f, 0.18f);
-        static readonly Color k_TrackSelectedBorder = new Color(1f, 0.45f, 0.05f, 0.7f);
+        // Unity key colors: white = normal, blue = selected, yellow = recording.
+        static readonly Color k_KeyColor = new Color(0.86f, 0.86f, 0.86f, 1f);
+        static readonly Color k_KeySelectedColor = new Color(0.30f, 0.55f, 0.95f, 1f);
+        static readonly Color k_KeyRecordingColor = new Color(0.95f, 0.78f, 0.20f, 1f);
+        static readonly Color k_KeyOutline = new Color(0f, 0f, 0f, 0.85f);
+        // White hover halo, Unity-style.
+        static readonly Color k_KeyHoverHalo = new Color(1f, 1f, 1f, 0.35f);
+        const float k_KeyHoverHaloPad = 2.5f;
+        static readonly Color k_TrackSelectedColor = new Color(0.30f, 0.55f, 0.95f, 0.14f);
+        static readonly Color k_TrackSelectedBorder = new Color(0.30f, 0.55f, 0.95f, 0.85f);
         static readonly Color k_EventColor = new Color(0.4f, 0.85f, 1f, 1f);
-        static readonly Color k_EventSelectedColor = new Color(1f, 1f, 1f, 1f);
-        static readonly Color k_EventSelectedOutline = new Color(1f, 0.45f, 0.05f, 1f);
-        static readonly Color k_PlayheadColor = new Color(1f, 0.4f, 0.4f, 0.85f);
+        static readonly Color k_EventSelectedColor = new Color(0.30f, 0.55f, 0.95f, 1f);
+        static readonly Color k_EventSelectedOutline = new Color(1f, 1f, 1f, 0.9f);
+        static readonly Color k_PlayheadColor = new Color(1f, 0.4f, 0.4f, 0.9f);
 
         VMGTimelineSelection m_Selection;
 
@@ -68,6 +75,40 @@ namespace VMG.EditorTools.Animation
         float m_PixelsPerSecond;
         float m_ScrollX;
 
+        // Hover state for key halo + row highlight. Refreshed each MouseMove /
+        // Repaint pass; -1 means "no hit".
+        int m_HoverTrack = -1;
+        int m_HoverKey = -1;
+        int m_HoverRow = -1;
+
+        // Ruler display unit. Persists per-window via EditorPrefs.
+        bool m_RulerShowFrames = true;
+        const string k_RulerFramesPrefKey = "VMG.Timeline.RulerShowFrames";
+
+        // Cached for the current Draw pass — DrawTrackKeys runs deep in the
+        // call chain and shouldn't reach for the animator on every frame.
+        bool m_RecordingThisFrame;
+
+        // --- Group/flatten state (R2) ---
+        // Auto-derived from clip.tracks each Draw pass. A "row" is either a
+        // group header (depth=0) or a real track (depth=1). Collapsed groups
+        // hide their child rows from the flat list.
+        struct Row
+        {
+            public bool isHeader;
+            public string groupKey;       // gameObjectPath + "|" + componentTypeName
+            public string headerLabel;    // pre-formatted "GO · ShortComp"
+            public int trackIdx;          // -1 when isHeader
+            public int groupFirstRowIdx;  // for child rows, the header row index
+        }
+
+        readonly List<Row> m_Rows = new List<Row>();
+        // Per-clip collapse state. Keyed by (clip instance id, groupKey). Lives
+        // in memory only — re-opening the window starts everything expanded.
+        readonly Dictionary<int, HashSet<string>> m_CollapsedByClip = new Dictionary<int, HashSet<string>>();
+
+        const float k_GroupCaretWidth = 14f;
+
         const float k_MinPps = 4f;
         const float k_MaxPps = 1000f;
         const float k_ZoomStep = 1.15f;
@@ -76,14 +117,27 @@ namespace VMG.EditorTools.Animation
         public VMGEditorPlayback Playback { get; set; }
         public bool DrawAddTrackBarEnabled { get; set; } = true;
 
+        bool m_PrefsLoaded;
+
         public void Draw(VMGAnimator animator)
         {
             var clip = animator.clip;
             if (clip == null) return;
 
+            if (!m_PrefsLoaded)
+            {
+                m_RulerShowFrames = EditorPrefs.GetBool(k_RulerFramesPrefKey, true);
+                m_PrefsLoaded = true;
+            }
+
             m_Selection = VMGTimelineSelection.For(animator);
-            int trackCount = clip.tracks != null ? clip.tracks.Count : 0;
-            float totalHeight = k_RulerHeight + k_EventRowHeight + Mathf.Max(trackCount, 1) * k_RowHeight + 2f + k_ScrollbarHeight;
+            var rec = VMGEditorRecord.For(animator);
+            m_RecordingThisFrame = rec != null && rec.IsRecording;
+
+            RebuildRows(clip);
+
+            int rowCount = m_Rows.Count;
+            float totalHeight = k_RulerHeight + k_EventRowHeight + Mathf.Max(rowCount, 1) * k_RowHeight + 2f + k_ScrollbarHeight;
 
             var rect = GUILayoutUtility.GetRect(0f, totalHeight, GUILayout.ExpandWidth(true));
             EditorGUI.DrawRect(rect, k_BgColor);
@@ -94,12 +148,11 @@ namespace VMG.EditorTools.Animation
             float viewWidth = Mathf.Max(1f, tlRight - tlLeft);
             float duration = Mathf.Max(0.0001f, clip.duration);
 
+            // Fit zoom always targets the clip *duration*, not the visible
+            // window — pressing Fit snaps to "no headroom".
             float fitPps = viewWidth / duration;
             float pps = m_PixelsPerSecond > 0f ? m_PixelsPerSecond : fitPps;
             pps = Mathf.Clamp(pps, Mathf.Max(k_MinPps, fitPps * 0.5f), k_MaxPps);
-            float contentWidth = duration * pps;
-            float maxScroll = Mathf.Max(0f, contentWidth - viewWidth);
-            m_ScrollX = Mathf.Clamp(m_ScrollX, 0f, maxScroll);
 
             var rulerRect = new Rect(tlLeft, rect.y, viewWidth, k_RulerHeight);
             var eventRowRect = new Rect(tlLeft, rulerRect.yMax, viewWidth, k_EventRowHeight);
@@ -109,20 +162,38 @@ namespace VMG.EditorTools.Animation
             // Re-read pps after possible zoom change.
             pps = m_PixelsPerSecond > 0f ? m_PixelsPerSecond : fitPps;
             pps = Mathf.Clamp(pps, Mathf.Max(k_MinPps, fitPps * 0.5f), k_MaxPps);
-            contentWidth = duration * pps;
-            maxScroll = Mathf.Max(0f, contentWidth - viewWidth);
+
+            // The visible window. When zoomed out past Fit, viewWidth covers
+            // more seconds than `duration` — the surplus is the headroom for
+            // extending keys past the current end. When zoomed in, the
+            // window collapses back to viewWidth's worth of content and the
+            // scrollbar covers the (duration - viewSeconds) overflow.
+            float viewSeconds = viewWidth / Mathf.Max(pps, 0.0001f);
+            float windowEnd = Mathf.Max(duration, viewSeconds);
+            float contentWidth = windowEnd * pps;
+            float maxScroll = Mathf.Max(0f, contentWidth - viewWidth);
             m_ScrollX = Mathf.Clamp(m_ScrollX, 0f, maxScroll);
 
             var gridRect = new Rect(tlLeft, rect.y, viewWidth, totalHeight - k_ScrollbarHeight - 2f);
-            DrawSnapGrid(gridRect, clip, duration, pps, m_ScrollX);
-            DrawRuler(rulerRect, duration, pps, m_ScrollX);
+            DrawSnapGrid(gridRect, clip, windowEnd, pps, m_ScrollX);
+            DrawRuler(rulerRect, windowEnd, duration, pps, m_ScrollX, clip);
 
             EditorGUI.DrawRect(new Rect(rect.x, eventRowRect.y, k_LabelWidth, eventRowRect.height), k_RulerColor);
             GUI.Label(new Rect(rect.x + 4f, eventRowRect.y, k_LabelWidth - 6f, eventRowRect.height), "Events", EditorStyles.miniLabel);
-            DrawEventsRow(eventRowRect, clip, duration, pps, m_ScrollX);
+            DrawEventsRow(eventRowRect, clip, windowEnd, pps, m_ScrollX);
 
             float trackTop = eventRowRect.yMax;
-            DrawTracks(rect, trackTop, tlLeft, viewWidth, clip, duration, pps, m_ScrollX);
+
+            // Refresh hover state for Repaint (Repaint events do not carry
+            // mouseDelta, but mousePosition is still valid).
+            UpdateHover(Event.current.mousePosition, rect, tlLeft, trackTop, clip, windowEnd, pps, m_ScrollX);
+
+            DrawTracks(rect, trackTop, tlLeft, viewWidth, clip, windowEnd, pps, m_ScrollX);
+
+            // Dim the headroom (duration .. windowEnd) so it reads as "out of
+            // clip" — keys still drag freely there, and dropping a key in
+            // the dim band extends `duration` on MouseUp.
+            DrawHeadroomDim(rect, tlLeft, viewWidth, duration, pps, m_ScrollX, totalHeight - k_ScrollbarHeight - 2f);
 
             DrawPlayhead(new Rect(tlLeft, rulerRect.y, viewWidth, totalHeight - k_ScrollbarHeight - 2f), animator.progress, duration, pps, m_ScrollX);
             DrawRubberBand();
@@ -130,7 +201,7 @@ namespace VMG.EditorTools.Animation
             float scrollbarY = rect.y + totalHeight - k_ScrollbarHeight - 1f;
             DrawHorizontalScrollbar(new Rect(tlLeft, scrollbarY, viewWidth, k_ScrollbarHeight), viewWidth, contentWidth);
 
-            HandleInput(rect, tlLeft, viewWidth, trackTop, clip, duration, animator, scrubRect, eventRowRect, pps, m_ScrollX);
+            HandleInput(rect, tlLeft, viewWidth, trackTop, clip, windowEnd, animator, scrubRect, eventRowRect, pps, m_ScrollX);
 
             if (DrawAddTrackBarEnabled) DrawAddTrackBar(animator);
         }
@@ -183,37 +254,81 @@ namespace VMG.EditorTools.Animation
             }
         }
 
-        static void DrawRuler(Rect rect, float duration, float pps, float scrollX)
+        void DrawRuler(Rect rect, float windowEnd, float duration, float pps, float scrollX, VMGAnimationClip clip)
         {
             EditorGUI.DrawRect(rect, k_RulerColor);
 
-            float visibleSeconds = rect.width / Mathf.Max(pps, 0.0001f);
-            float step = ChooseGridStep(visibleSeconds);
-            int first = Mathf.FloorToInt(scrollX / Mathf.Max(pps, 0.0001f) / step);
-            int last = Mathf.CeilToInt((scrollX + rect.width) / Mathf.Max(pps, 0.0001f) / step);
-            var labelStyle = EditorStyles.miniLabel;
-            for (int i = first; i <= last; i++)
+            // s/f toggle in the label gutter to the LEFT of the ruler. The
+            // ruler rect itself only spans the timeline area; the gutter is
+            // [rect.x - k_LabelWidth, rect.x]. snapDivisor == 0 means "no
+            // frame rate is defined", in which case the toggle is disabled
+            // and the unit is forced to seconds.
+            int fps = clip != null ? Mathf.Max(0, clip.snapDivisor) : 0;
+            bool canShowFrames = fps > 0;
+            bool showFrames = m_RulerShowFrames && canShowFrames;
+            var togglePos = new Rect(rect.x - 36f, rect.y + 1f, 32f, rect.height - 2f);
+            using (new EditorGUI.DisabledScope(!canShowFrames))
             {
-                float t = i * step;
-                if (t < 0f || t > duration) continue;
-                float x = TimeToX(t, rect.x, pps, scrollX);
-                if (x < rect.x || x > rect.xMax) continue;
-                EditorGUI.DrawRect(new Rect(x, rect.y, 1f, rect.height), k_GridColor);
-                GUI.Label(new Rect(x + 2f, rect.y, 60f, rect.height), $"{t:0.##}s", labelStyle);
+                string label = showFrames ? "f" : "s";
+                if (GUI.Button(togglePos, new GUIContent(label, canShowFrames
+                        ? $"Ruler unit: {(showFrames ? "frames" : "seconds")} (click to switch). Frame rate = clip.snapDivisor."
+                        : "Set clip.snapDivisor > 0 to enable frame display."),
+                    EditorStyles.miniButton))
+                {
+                    m_RulerShowFrames = !m_RulerShowFrames;
+                    EditorPrefs.SetBool(k_RulerFramesPrefKey, m_RulerShowFrames);
+                }
             }
+
+            float pixelsPerUnit = showFrames ? pps / Mathf.Max(1, fps) : pps;  // px per (frame|second)
+            float visibleUnits = rect.width / Mathf.Max(pixelsPerUnit, 0.0001f);
+            float majorStep = ChooseGridStep(visibleUnits, showFrames);
+            // Drop minor ticks when they would be denser than ~5px apart.
+            float minorStep = (majorStep * 0.25f * pixelsPerUnit >= 5f) ? majorStep * 0.25f : majorStep;
+
+            int firstMinor = Mathf.FloorToInt((scrollX / pps) * (showFrames ? fps : 1f) / minorStep);
+            int lastMinor = Mathf.CeilToInt(((scrollX + rect.width) / pps) * (showFrames ? fps : 1f) / minorStep);
+            // Ticks now extend all the way to windowEnd, so headroom shows
+            // ruler marks too. duration is still highlighted with a 1px end
+            // marker and the dim overlay (drawn later).
+            float maxUnit = windowEnd * (showFrames ? fps : 1f);
+
+            var labelStyle = EditorStyles.miniLabel;
+            for (int i = firstMinor; i <= lastMinor; i++)
+            {
+                float u = i * minorStep;
+                if (u < 0f || u > maxUnit + 1e-4f) continue;
+                float tSec = showFrames ? u / Mathf.Max(1f, fps) : u;
+                float x = TimeToX(tSec, rect.x, pps, scrollX);
+                if (x < rect.x || x > rect.xMax) continue;
+                bool isMajor = Mathf.Abs(u / majorStep - Mathf.Round(u / majorStep)) < 1e-3f;
+                EditorGUI.DrawRect(new Rect(x, rect.y + (isMajor ? 0f : rect.height * 0.55f), 1f, isMajor ? rect.height : rect.height * 0.45f), isMajor ? k_GridColor : k_GridMinorColor);
+                if (isMajor)
+                {
+                    string s = showFrames ? Mathf.RoundToInt(u).ToString() : $"{u:0.##}s";
+                    GUI.Label(new Rect(x + 2f, rect.y, 60f, rect.height), s, labelStyle);
+                }
+            }
+
             float endX = TimeToX(duration, rect.x, pps, scrollX);
             if (endX >= rect.x && endX <= rect.xMax)
                 EditorGUI.DrawRect(new Rect(endX - 1f, rect.y, 1f, rect.height), k_GridColor);
         }
 
-        static float ChooseGridStep(float visibleSeconds)
+        // Pick a "nice" tick step so ~8 majors fit the visible area. For
+        // frames, prefer integer steps (1,2,5,10,...). For seconds, the
+        // historical sub-second candidates remain.
+        static float ChooseGridStep(float visibleUnits, bool framesMode)
         {
-            float raw = visibleSeconds / 8f;
-            float[] candidates = { 0.01f, 0.02f, 0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 30f, 60f };
-            foreach (var c in candidates)
+            float raw = visibleUnits / 8f;
+            if (framesMode)
             {
-                if (raw <= c) return c;
+                float[] frameCandidates = { 1f, 2f, 5f, 10f, 15f, 30f, 60f, 120f, 300f, 600f, 1800f, 3600f };
+                foreach (var c in frameCandidates) if (raw <= c) return c;
+                return 3600f;
             }
+            float[] secCandidates = { 0.01f, 0.02f, 0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 30f, 60f };
+            foreach (var c in secCandidates) if (raw <= c) return c;
             return 60f;
         }
 
@@ -246,33 +361,112 @@ namespace VMG.EditorTools.Animation
             }
         }
 
+        // Background tint for group header rows. Slightly darker than the
+        // banded track row so the visual hierarchy reads at a glance.
+        static readonly Color k_GroupHeaderColor = new Color(0f, 0f, 0f, 0.18f);
+        static readonly Color k_CaretColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+        // Half-size diamonds drawn on collapsed group headers as a summary
+        // of hidden child keys. Visual only — they don't take input.
+        const float k_SummaryKeyHalfWidth = 3f;
+        const float k_SummaryKeyHalfHeight = 4f;
+        static readonly Color k_SummaryKeyColor = new Color(0.86f, 0.86f, 0.86f, 0.55f);
+
         void DrawTracks(Rect outer, float top, float tlLeft, float tlWidth, VMGAnimationClip clip, float duration, float pps, float scrollX)
         {
-            int trackCount = clip.tracks != null ? clip.tracks.Count : 0;
             int selTrack = m_Selection.trackIndex;
-            for (int i = 0; i < Mathf.Max(trackCount, 1); i++)
+            int rowCount = m_Rows.Count;
+            for (int i = 0; i < Mathf.Max(rowCount, 1); i++)
             {
                 var rowRect = new Rect(outer.x, top + i * k_RowHeight, outer.width - 2f, k_RowHeight);
-                if (i % 2 == 1) EditorGUI.DrawRect(rowRect, k_AltRowColor);
-                if (i == selTrack)
+                bool hovered = i == m_HoverRow;
+
+                if (i >= rowCount)
                 {
-                    EditorGUI.DrawRect(rowRect, k_TrackSelectedColor);
-                    EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, 2f, rowRect.height), k_TrackSelectedBorder);
+                    // Empty-clip placeholder row.
+                    GUI.Label(new Rect(rowRect.x + 4f, rowRect.y, k_LabelWidth - 6f, rowRect.height), "<empty>", EditorStyles.miniLabel);
+                    continue;
                 }
 
-                var labelRect = new Rect(rowRect.x + 4f, rowRect.y, k_LabelWidth - 6f, rowRect.height);
-                if (i < trackCount && clip.tracks[i] != null)
+                var row = m_Rows[i];
+                if (row.isHeader)
                 {
-                    var track = clip.tracks[i];
-                    string title = BuildTrackTitle(track, i);
-                    GUI.Label(labelRect, title, EditorStyles.miniLabel);
-
-                    var keysRect = new Rect(tlLeft, rowRect.y, tlWidth, rowRect.height);
-                    DrawTrackKeys(keysRect, track, duration, i, pps, scrollX);
+                    DrawGroupHeaderRow(rowRect, tlLeft, tlWidth, clip, row, duration, pps, scrollX, hovered);
                 }
                 else
                 {
-                    GUI.Label(labelRect, "<empty>", EditorStyles.miniLabel);
+                    DrawChildTrackRow(rowRect, tlLeft, tlWidth, clip, row.trackIdx, i, selTrack, duration, pps, scrollX, hovered);
+                }
+            }
+        }
+
+        void DrawGroupHeaderRow(Rect rowRect, float tlLeft, float tlWidth, VMGAnimationClip clip, Row row, float duration, float pps, float scrollX, bool hovered)
+        {
+            EditorGUI.DrawRect(rowRect, k_GroupHeaderColor);
+            if (hovered) EditorGUI.DrawRect(rowRect, k_RowHoverColor);
+
+            // Caret + bold label area.
+            bool collapsed = IsGroupCollapsed(clip, row.groupKey);
+            var caretRect = new Rect(rowRect.x + 2f, rowRect.y, k_GroupCaretWidth, rowRect.height);
+            var caret = new GUIContent(collapsed ? "▶" : "▼"); // ▶ / ▼
+            var caretStyle = EditorStyles.miniLabel;
+            var prevColor = GUI.color;
+            GUI.color = k_CaretColor;
+            GUI.Label(caretRect, caret, caretStyle);
+            GUI.color = prevColor;
+
+            var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f, rowRect.height);
+            GUI.Label(labelRect, row.headerLabel, EditorStyles.boldLabel);
+
+            // Collapsed: draw summary diamonds for hidden child keys.
+            if (collapsed)
+            {
+                var keysRect = new Rect(tlLeft, rowRect.y, tlWidth, rowRect.height);
+                DrawGroupSummaryKeys(keysRect, clip, row.groupKey, duration, pps, scrollX);
+            }
+        }
+
+        void DrawChildTrackRow(Rect rowRect, float tlLeft, float tlWidth, VMGAnimationClip clip, int trackIdx, int rowIdx, int selTrack, float duration, float pps, float scrollX, bool hovered)
+        {
+            // Banded rows (Unity Animation pattern: alternating subtle tint).
+            if (rowIdx % 2 == 1) EditorGUI.DrawRect(rowRect, k_AltRowColor);
+            if (hovered && trackIdx != selTrack) EditorGUI.DrawRect(rowRect, k_RowHoverColor);
+            if (trackIdx == selTrack)
+            {
+                EditorGUI.DrawRect(rowRect, k_TrackSelectedColor);
+                EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, 2f, rowRect.height), k_TrackSelectedBorder);
+            }
+
+            // Indent child rows under their group header.
+            var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f, rowRect.height);
+            if (clip.tracks != null && trackIdx >= 0 && trackIdx < clip.tracks.Count && clip.tracks[trackIdx] != null)
+            {
+                var track = clip.tracks[trackIdx];
+                GUI.Label(labelRect, BuildTrackTitle(track, trackIdx), EditorStyles.miniLabel);
+                var keysRect = new Rect(tlLeft, rowRect.y, tlWidth, rowRect.height);
+                DrawTrackKeys(keysRect, track, duration, trackIdx, pps, scrollX);
+            }
+            else
+            {
+                GUI.Label(labelRect, "<empty>", EditorStyles.miniLabel);
+            }
+        }
+
+        void DrawGroupSummaryKeys(Rect rect, VMGAnimationClip clip, string groupKey, float duration, float pps, float scrollX)
+        {
+            if (clip.tracks == null) return;
+            float cy = rect.y + rect.height * 0.5f;
+            for (int ti = 0; ti < clip.tracks.Count; ti++)
+            {
+                var track = clip.tracks[ti];
+                if (track == null) continue;
+                if (BuildGroupKey(track.binding) != groupKey) continue;
+                if (track.keys == null) continue;
+                for (int ki = 0; ki < track.keys.Count; ki++)
+                {
+                    float t = Mathf.Clamp(track.keys[ki].time, 0f, duration);
+                    float cx = TimeToX(t, rect.x, pps, scrollX);
+                    if (cx < rect.x - k_SummaryKeyHalfWidth - 2f || cx > rect.xMax + k_SummaryKeyHalfWidth + 2f) continue;
+                    DrawDiamond(cx, cy, k_SummaryKeyHalfWidth, k_SummaryKeyHalfHeight, k_SummaryKeyColor);
                 }
             }
         }
@@ -281,31 +475,149 @@ namespace VMG.EditorTools.Animation
         {
             var b = track.binding;
             string field = string.IsNullOrEmpty(b.fieldPath) ? "?" : b.fieldPath;
-            string path = string.IsNullOrEmpty(b.gameObjectPath) ? "self" : b.gameObjectPath;
-            return $"{index}: {path} · {field}";
+            // Group header already shows the GO path + component, so the
+            // child row only needs the field path. Index keeps the
+            // "{n}: …" affordance for selection feedback.
+            return $"{index}: {field}";
+        }
+
+        // Group key = "gameObjectPath|componentTypeName". Display label uses
+        // "self" for empty path and the short type name (last token after the
+        // last dot, before any comma) for the assembly-qualified component.
+        static string BuildGroupKey(VMGChannelBinding b) =>
+            (b.gameObjectPath ?? string.Empty) + "|" + (b.componentTypeName ?? string.Empty);
+
+        static string BuildGroupLabel(VMGChannelBinding b)
+        {
+            string path = string.IsNullOrEmpty(b.gameObjectPath) ? "<self>" : b.gameObjectPath;
+            string comp = ShortComponentName(b.componentTypeName);
+            return string.IsNullOrEmpty(comp) ? path : $"{path}  ·  {comp}";
+        }
+
+        static string ShortComponentName(string typeName)
+        {
+            if (string.IsNullOrEmpty(typeName)) return string.Empty;
+            int comma = typeName.IndexOf(',');
+            string baseName = comma >= 0 ? typeName.Substring(0, comma) : typeName;
+            int dot = baseName.LastIndexOf('.');
+            return dot >= 0 ? baseName.Substring(dot + 1) : baseName;
+        }
+
+        HashSet<string> GetCollapsedSet(VMGAnimationClip clip)
+        {
+            int id = clip.GetInstanceID();
+            if (!m_CollapsedByClip.TryGetValue(id, out var set))
+            {
+                set = new HashSet<string>();
+                m_CollapsedByClip[id] = set;
+            }
+            return set;
+        }
+
+        void RebuildRows(VMGAnimationClip clip)
+        {
+            m_Rows.Clear();
+            if (clip == null || clip.tracks == null) return;
+            var collapsed = GetCollapsedSet(clip);
+
+            // Track-order grouping: keep tracks in their list order, start a
+            // new group whenever the (GO, component) key changes. This means
+            // re-grouping never reorders the underlying list, so trackIdx
+            // semantics stay intact for selection, drag, undo.
+            string activeKey = null;
+            int activeHeaderRow = -1;
+            for (int ti = 0; ti < clip.tracks.Count; ti++)
+            {
+                var track = clip.tracks[ti];
+                if (track == null) continue;
+                string key = BuildGroupKey(track.binding);
+                if (key != activeKey)
+                {
+                    activeKey = key;
+                    activeHeaderRow = m_Rows.Count;
+                    m_Rows.Add(new Row
+                    {
+                        isHeader = true,
+                        groupKey = key,
+                        headerLabel = BuildGroupLabel(track.binding),
+                        trackIdx = -1,
+                        groupFirstRowIdx = activeHeaderRow,
+                    });
+                }
+                if (!collapsed.Contains(key))
+                {
+                    m_Rows.Add(new Row
+                    {
+                        isHeader = false,
+                        groupKey = key,
+                        headerLabel = null,
+                        trackIdx = ti,
+                        groupFirstRowIdx = activeHeaderRow,
+                    });
+                }
+            }
+        }
+
+        bool IsGroupCollapsed(VMGAnimationClip clip, string groupKey) =>
+            GetCollapsedSet(clip).Contains(groupKey);
+
+        void ToggleGroupCollapsed(VMGAnimationClip clip, string groupKey)
+        {
+            var set = GetCollapsedSet(clip);
+            if (!set.Add(groupKey)) set.Remove(groupKey);
+            // Selection of a now-hidden child should stay valid — clearing
+            // would be surprising. Hidden selection just becomes invisible
+            // until the group is re-expanded.
         }
 
         void DrawTrackKeys(Rect rect, VMGAnimationTrack track, float duration, int trackIndex, float pps, float scrollX)
         {
             if (track.keys == null) return;
+            bool recording = m_RecordingThisFrame;
             float cy = rect.y + rect.height * 0.5f;
             for (int i = 0; i < track.keys.Count; i++)
             {
                 var k = track.keys[i];
                 float t = Mathf.Clamp(k.time, 0f, duration);
                 float cx = TimeToX(t, rect.x, pps, scrollX);
-                if (cx < rect.x - k_KeyRadius - 4f || cx > rect.xMax + k_KeyRadius + 4f) continue;
+                if (cx < rect.x - k_KeyHalfWidth - 4f || cx > rect.xMax + k_KeyHalfWidth + 4f) continue;
                 bool selected = m_Selection.Contains(trackIndex, i);
-                if (selected)
+                bool hovered = trackIndex == m_HoverTrack && i == m_HoverKey;
+                if (hovered)
                 {
-                    Handles.color = k_KeySelectedOutline;
-                    Handles.DrawSolidDisc(new Vector3(cx, cy, 0f), Vector3.forward, k_KeyRadius + k_KeySelectedOutlineRadius);
+                    DrawDiamond(cx, cy, k_KeyHalfWidth + k_KeyHoverHaloPad, k_KeyHalfHeight + k_KeyHoverHaloPad, k_KeyHoverHalo);
                 }
-                Handles.color = k_KeyOutline;
-                Handles.DrawSolidDisc(new Vector3(cx, cy, 0f), Vector3.forward, k_KeyRadius + 1f);
-                Handles.color = selected ? k_KeySelectedColor : k_KeyColor;
-                Handles.DrawSolidDisc(new Vector3(cx, cy, 0f), Vector3.forward, k_KeyRadius);
+                Color fill = selected ? k_KeySelectedColor : (recording ? k_KeyRecordingColor : k_KeyColor);
+                // 1px outline via a slightly larger diamond underneath.
+                DrawDiamond(cx, cy, k_KeyHalfWidth + 1f, k_KeyHalfHeight + 1f, k_KeyOutline);
+                DrawDiamond(cx, cy, k_KeyHalfWidth, k_KeyHalfHeight, fill);
             }
+        }
+
+        static void DrawDiamond(float cx, float cy, float hw, float hh, Color color)
+        {
+            var prev = Handles.color;
+            Handles.color = color;
+            Handles.DrawAAConvexPolygon(
+                new Vector3(cx, cy - hh, 0f),
+                new Vector3(cx + hw, cy, 0f),
+                new Vector3(cx, cy + hh, 0f),
+                new Vector3(cx - hw, cy, 0f));
+            Handles.color = prev;
+        }
+
+        // Dim everything past `duration`. Drawn after tracks/grid/ruler so it
+        // sits visually on top of those but below playhead + rubber-band.
+        static readonly Color k_HeadroomDimColor = new Color(0f, 0f, 0f, 0.22f);
+
+        void DrawHeadroomDim(Rect outer, float tlLeft, float viewWidth, float duration, float pps, float scrollX, float bodyHeight)
+        {
+            float endX = TimeToX(duration, tlLeft, pps, scrollX);
+            // Clip the overlay to the visible timeline strip.
+            float left = Mathf.Max(endX, tlLeft);
+            float right = tlLeft + viewWidth;
+            if (right <= left) return;
+            EditorGUI.DrawRect(new Rect(left, outer.y, right - left, bodyHeight), k_HeadroomDimColor);
         }
 
         static void DrawPlayhead(Rect tlRect, float progress, float duration, float pps, float scrollX)
@@ -347,12 +659,17 @@ namespace VMG.EditorTools.Animation
             var picked = new List<VMGTimelineSelection.Item>();
             if (m_RubberShift && m_RubberInitialSelection != null) picked.AddRange(m_RubberInitialSelection);
 
-            int trackCount = clip.tracks != null ? clip.tracks.Count : 0;
-            for (int ti = 0; ti < trackCount; ti++)
+            // Walk flattened rows so collapsed groups (no visible rows) are
+            // naturally excluded from lasso selection. Group header rows are
+            // skipped — only real tracks contribute keys.
+            for (int ri = 0; ri < m_Rows.Count; ri++)
             {
-                var track = clip.tracks[ti];
+                var row = m_Rows[ri];
+                if (row.isHeader) continue;
+                if (clip.tracks == null || row.trackIdx < 0 || row.trackIdx >= clip.tracks.Count) continue;
+                var track = clip.tracks[row.trackIdx];
                 if (track == null || track.keys == null) continue;
-                float rowTop = trackTop + ti * k_RowHeight;
+                float rowTop = trackTop + ri * k_RowHeight;
                 float cy = rowTop + k_RowHeight * 0.5f;
                 if (cy < box.y || cy > box.yMax) continue;
                 for (int ki = 0; ki < track.keys.Count; ki++)
@@ -360,7 +677,7 @@ namespace VMG.EditorTools.Animation
                     float t = Mathf.Clamp(track.keys[ki].time, 0f, duration);
                     float cx = TimeToX(t, tlLeft, pps, scrollX);
                     if (cx < box.x || cx > box.xMax) continue;
-                    var item = new VMGTimelineSelection.Item { track = ti, key = ki };
+                    var item = new VMGTimelineSelection.Item { track = row.trackIdx, key = ki };
                     if (!picked.Contains(item)) picked.Add(item);
                 }
             }
@@ -420,10 +737,19 @@ namespace VMG.EditorTools.Animation
 
         int m_DraggingEvent = -1;
 
-        void HandleInput(Rect outer, float tlLeft, float tlWidth, float trackTop, VMGAnimationClip clip, float duration, VMGAnimator animator, Rect scrubRect, Rect eventRowRect, float pps, float scrollX)
+        // `windowEnd` is the visible-window upper bound, NOT the clip's
+        // duration — it may exceed duration when zoomed-out headroom is
+        // present. All drag/scrub/add-key clamps run against windowEnd so
+        // keys can be extended into the headroom; duration is then
+        // recalculated on MouseUp via RecalculateDuration().
+        void HandleInput(Rect outer, float tlLeft, float tlWidth, float trackTop, VMGAnimationClip clip, float windowEnd, VMGAnimator animator, Rect scrubRect, Rect eventRowRect, float pps, float scrollX)
         {
+            // Inside this method `duration` historically meant "drag/scrub
+            // clamp ceiling" — that's now the windowEnd. ScrubTo and Add Key
+            // need the real clip.duration; they reach for it via the clip
+            // reference directly.
+            float duration = windowEnd;
             var e = Event.current;
-            int trackCount = clip.tracks != null ? clip.tracks.Count : 0;
 
             switch (e.type)
             {
@@ -521,8 +847,23 @@ namespace VMG.EditorTools.Animation
                             return;
                         }
                     }
-                    if (TryFindTrackRow(e.mousePosition, trackTop, trackCount, out int trackIdx))
+                    if (TryFindRow(e.mousePosition, trackTop, out int rowIdx))
                     {
+                        var row = m_Rows[rowIdx];
+                        if (row.isHeader)
+                        {
+                            // Any LMB anywhere on the group header toggles
+                            // collapse. Right-click is reserved for a
+                            // future per-group context menu (no-op for now).
+                            if (e.button == 0)
+                            {
+                                ToggleGroupCollapsed(clip, row.groupKey);
+                                e.Use();
+                                GUI.changed = true;
+                            }
+                            break;
+                        }
+                        int trackIdx = row.trackIdx;
                         if (e.button == 0 && e.mousePosition.x < tlLeft)
                         {
                             m_Selection.Select(trackIdx, -1);
@@ -624,7 +965,7 @@ namespace VMG.EditorTools.Animation
                         {
                             Undo.RecordObject(clip, "Move VMG Event");
                             ev.time = et;
-                            clip.RecalculateDurationIfAuto();
+                            clip.RecalculateDuration();
                             VMGTimelineSelection.MarkDirty(clip);
                         }
                         e.Use();
@@ -665,7 +1006,7 @@ namespace VMG.EditorTools.Animation
                             kk.time = Mathf.Max(0f, snap.originalTime + delta);
                             tr.keys[snap.key] = kk;
                         }
-                        clip.RecalculateDurationIfAuto();
+                        clip.RecalculateDuration();
                         VMGTimelineSelection.MarkDirty(clip);
                         m_KeyDragMoved = true;
                         e.Use();
@@ -681,7 +1022,7 @@ namespace VMG.EditorTools.Animation
                         Undo.RecordObject(clip, "Move VMG Key");
                         k.time = t;
                         track.keys[m_DraggingKey] = k;
-                        clip.RecalculateDurationIfAuto();
+                        clip.RecalculateDuration();
                         VMGTimelineSelection.MarkDirty(clip);
                         m_KeyDragMoved = true;
                     }
@@ -701,7 +1042,7 @@ namespace VMG.EditorTools.Animation
                         {
                             // Click without drag on empty area: fall back to
                             // track selection.
-                            if (TryFindTrackRow(m_RubberStart, trackTop, trackCount, out int tIdx))
+                            if (TryFindTrackRow(m_RubberStart, trackTop, out int tIdx))
                             {
                                 if (m_Selection.trackIndex != tIdx) m_Selection.Select(tIdx, -1);
                             }
@@ -749,13 +1090,57 @@ namespace VMG.EditorTools.Animation
             }
         }
 
-        static bool TryFindTrackRow(Vector2 pos, float trackTop, int trackCount, out int trackIdx)
+        void UpdateHover(Vector2 mousePos, Rect outer, float tlLeft, float trackTop, VMGAnimationClip clip, float duration, float pps, float scrollX)
         {
-            trackIdx = -1;
+            int prevTrack = m_HoverTrack;
+            int prevKey = m_HoverKey;
+            int prevRow = m_HoverRow;
+
+            // m_HoverRow is the *flattened* row index (group headers count).
+            // m_HoverTrack is the real clip.tracks index (or -1 for headers
+            // / no hit). This split lets banded/hover row tinting follow the
+            // visual layout while key hit-test still keys off real trackIdx.
+            m_HoverTrack = -1;
+            m_HoverKey = -1;
+            m_HoverRow = -1;
+
+            if (outer.Contains(mousePos) && TryFindRow(mousePos, trackTop, out int rowIdx))
+            {
+                m_HoverRow = rowIdx;
+                var row = m_Rows[rowIdx];
+                if (!row.isHeader && mousePos.x >= tlLeft
+                    && TryHitKey(clip, row.trackIdx, mousePos, tlLeft, pps, scrollX, duration, out int keyIdx))
+                {
+                    m_HoverTrack = row.trackIdx;
+                    m_HoverKey = keyIdx;
+                }
+            }
+
+            if (prevTrack != m_HoverTrack || prevKey != m_HoverKey || prevRow != m_HoverRow)
+                GUI.changed = true;
+        }
+
+        // Map mouse Y to the flattened row index. Caller decides what to do
+        // with header vs. track rows via the Row struct.
+        bool TryFindRow(Vector2 pos, float trackTop, out int rowIdx)
+        {
+            rowIdx = -1;
             if (pos.y < trackTop) return false;
             int idx = Mathf.FloorToInt((pos.y - trackTop) / k_RowHeight);
-            if (idx < 0 || idx >= trackCount) return false;
-            trackIdx = idx;
+            if (idx < 0 || idx >= m_Rows.Count) return false;
+            rowIdx = idx;
+            return true;
+        }
+
+        // For callers that only care about real tracks. Returns false when
+        // the pointer is over a group header or below all rows.
+        bool TryFindTrackRow(Vector2 pos, float trackTop, out int trackIdx)
+        {
+            trackIdx = -1;
+            if (!TryFindRow(pos, trackTop, out int rowIdx)) return false;
+            var row = m_Rows[rowIdx];
+            if (row.isHeader) return false;
+            trackIdx = row.trackIdx;
             return true;
         }
 
@@ -778,12 +1163,18 @@ namespace VMG.EditorTools.Animation
             return false;
         }
 
-        static void ScrubTo(VMGAnimator animator, float px, float tlLeft, float pps, float scrollX, float duration, VMGAnimationClip clip, bool shiftHeld)
+        // `windowEnd` clamps the cursor so you can scrub into headroom (and
+        // the playhead settles at the real duration). progress is normalized
+        // against clip.duration so animator playback stays consistent.
+        static void ScrubTo(VMGAnimator animator, float px, float tlLeft, float pps, float scrollX, float windowEnd, VMGAnimationClip clip, bool shiftHeld)
         {
             float t = XToTime(px, tlLeft, pps, scrollX);
             t = SnapTime(t, clip, shiftHeld);
-            t = Mathf.Clamp(t, 0f, duration);
-            float u = duration > 0f ? t / duration : 0f;
+            // Clamp the scrub cursor to clip.duration — there's nothing
+            // animatable past it, so the playhead snaps to the end.
+            float dur = Mathf.Max(0.0001f, clip != null ? clip.duration : windowEnd);
+            t = Mathf.Clamp(t, 0f, dur);
+            float u = t / dur;
             animator.progress = u;
             try { animator.Sample(u); }
             catch { }
@@ -795,6 +1186,8 @@ namespace VMG.EditorTools.Animation
             float t = SnapTime(XToTime(mousePos.x, tlLeft, pps, scrollX), clip, shiftHeld: false);
             t = Mathf.Clamp(t, 0f, duration);
             var menu = new GenericMenu();
+
+            // Section: Add
             menu.AddItem(new GUIContent($"Add Key at {t:0.###}s"), false, () =>
             {
                 Undo.RecordObject(clip, "Add VMG Key");
@@ -810,11 +1203,14 @@ namespace VMG.EditorTools.Animation
                 }
                 track.keys.Add(k);
                 track.keys.Sort((a, b) => a.time.CompareTo(b.time));
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
                 m_Selection.Clear();
             });
+
             menu.AddSeparator(string.Empty);
+
+            // Section: Clipboard
             if (m_Selection.HasSelection)
                 menu.AddItem(new GUIContent($"Copy {m_Selection.Count} Key(s)"), false, () => VMGKeyClipboard.Copy(clip, m_Selection.Items));
             else
@@ -833,15 +1229,23 @@ namespace VMG.EditorTools.Animation
             }
             else
                 menu.AddDisabledItem(new GUIContent("Paste Keys (clipboard empty)"));
+            if (m_Selection.HasSelection)
+                menu.AddItem(new GUIContent($"Delete {m_Selection.Count} Key(s)"), false, () => DeleteSelectedKeys(clip));
+            else
+                menu.AddDisabledItem(new GUIContent("Delete Key(s) (none selected)"));
+
             menu.AddSeparator(string.Empty);
+
+            // Section: Track
             menu.AddItem(new GUIContent("Delete Track"), false, () =>
             {
                 Undo.RecordObject(clip, "Delete VMG Track");
                 clip.tracks.RemoveAt(trackIdx);
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 m_Selection.Clear();
                 VMGTimelineSelection.MarkDirty(clip);
             });
+
             menu.ShowAsContext();
         }
 
@@ -911,18 +1315,19 @@ namespace VMG.EditorTools.Animation
                 int newIdx = -1;
                 for (int i = 0; i < clip.events.Count; i++)
                     if (Mathf.Approximately(clip.events[i].time, t)) { newIdx = i; break; }
-                clip.RecalculateDurationIfAuto();
+                clip.RecalculateDuration();
                 VMGTimelineSelection.MarkDirty(clip);
                 if (newIdx >= 0) m_Selection.SelectEvent(newIdx);
             });
             if (TryHitEvent(clip, mousePos, tlLeft, pps, scrollX, duration, out int hitIdx))
             {
+                menu.AddSeparator(string.Empty);
                 menu.AddItem(new GUIContent("Delete Event"), false, () =>
                 {
                     Undo.RecordObject(clip, "Delete VMG Event");
                     clip.events.RemoveAt(hitIdx);
                     m_Selection.ClearEvent();
-                    clip.RecalculateDurationIfAuto();
+                    clip.RecalculateDuration();
                     VMGTimelineSelection.MarkDirty(clip);
                 });
             }
@@ -936,7 +1341,7 @@ namespace VMG.EditorTools.Animation
             Undo.RecordObject(clip, "Delete VMG Event");
             clip.events.RemoveAt(idx);
             m_Selection.ClearEvent();
-            clip.RecalculateDurationIfAuto();
+            clip.RecalculateDuration();
             VMGTimelineSelection.MarkDirty(clip);
         }
 
@@ -960,7 +1365,7 @@ namespace VMG.EditorTools.Animation
                     if (ki >= 0 && ki < tr.keys.Count) tr.keys.RemoveAt(ki);
             }
             m_Selection.Clear();
-            clip.RecalculateDurationIfAuto();
+            clip.RecalculateDuration();
             VMGTimelineSelection.MarkDirty(clip);
         }
 

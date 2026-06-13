@@ -105,7 +105,7 @@ namespace VMG.EditorTools.Animation
                     }
                 }
             }
-            clip.RecalculateDurationIfAuto();
+            clip.RecalculateDuration();
             return newSelection;
         }
 

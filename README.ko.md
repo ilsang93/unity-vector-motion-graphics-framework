@@ -4,7 +4,7 @@
 
 Unity용 절차적(procedural) 벡터 모션 그래픽 런타임. After Effects의 셰이프 레이어 같은 표현력을, UGUI와 월드 스페이스 양쪽 렌더러에서 Unity Animator / Timeline과 완전히 통합되는 형태로 제공합니다.
 
-## 주요 기능 (0.26.0)
+## 주요 기능 (0.32.0)
 
 - Path + Node 데이터 모델, 노드별 큐빅 베지어(`inTangent` / `outTangent`) 지원. 모든 모디파이어 적용 전에 미리 테셀레이션됨
 - CPU 기반 절차적 메시 생성
@@ -70,7 +70,7 @@ DOTween이 없는 프로젝트에는 영향을 주지 않습니다 (하드 의�
 
 아래의 Unity AnimationClip / Timeline 경로 외에도, VMG는 `PlayableDirector`나 Unity Timeline에 의존하지 않는 자체 애니메이터를 함께 제공합니다. 세 가지 작성 방식이 모두 같은 엔진을 구동합니다:
 
-- **`VMGAnimationClip` + VMGAnimator** — ScriptableObject 클립 에셋, 전용 타임라인 윈도우에서 편집. 트랙별 키와 ease, 다중 타겟, 이벤트, baseline 복원 지원.
+- **`VMGAnimationClip` + VMGAnimator** — ScriptableObject 클립 에셋, 전용 타임라인 윈도우에서 편집. 트랙별 키와 ease, 다중 타겟, 이벤트, baseline 복원 지원. 컴포지션 그룹으로 여러 GameObject에 걸친 트랙들(예: "Hero entrance")을 하나의 묶음으로 관리 — 우클릭 할당과 드래그 reorder 지원.
 - **코드 API (anime.js 스타일 fluent 빌더)** — `VMGFx.Animate(target).To(...).Duration(...).Ease(...).Play()`, 시퀀싱용 `VMGFx.Timeline()` (상대 위치 `"+=0.2"`, `"<"`, `"-=F"`), 타겟별 오프셋용 `VMGFx.Stagger(targets, ...)`, spring / motion-path / function-value 채널.
 - **`.vmgfx` DSL** — 평문 스크립트 (`add`, `animate`, `timeline`, `keyframes`, `stagger` 등) 가 같은 엔진으로 컴파일됨. `.vmgfx` 파일(또는 임의의 TextAsset)을 `VMGAnimator.script`에 할당하면 enable 시점에 하위 계층이 빌드됨. 1회 재생 vs 무한 재생을 위한 `playOnEnable` / `loopScript` 토글 제공.
 

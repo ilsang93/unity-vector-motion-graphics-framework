@@ -7,12 +7,15 @@ namespace VMG.Animation.Serialization
     [Serializable]
     internal class VMGClipDto
     {
-        public string formatVersion = "1";
+        // "1" → no userGroups / no track.groupId
+        // "2" → userGroups + track.groupId present
+        public string formatVersion = "2";
         public float duration;
         public bool loop;
         public int snapDivisor = 60;
         public List<VMGTrackDto> tracks = new List<VMGTrackDto>();
         public List<VMGEventDto> events = new List<VMGEventDto>();
+        public List<VMGTrackGroupDto> userGroups = new List<VMGTrackGroupDto>();
         public VMGHierarchyDto hierarchy = new VMGHierarchyDto();
         public List<VMGShapeAssetRefDto> requiredShapeAssets = new List<VMGShapeAssetRefDto>();
     }
@@ -24,7 +27,15 @@ namespace VMG.Animation.Serialization
         public string componentTypeName;
         public string fieldPath;
         public int channelType;
+        public int groupId;
         public List<VMGKeyDto> keys = new List<VMGKeyDto>();
+    }
+
+    [Serializable]
+    internal class VMGTrackGroupDto
+    {
+        public int id;
+        public string name;
     }
 
     [Serializable]

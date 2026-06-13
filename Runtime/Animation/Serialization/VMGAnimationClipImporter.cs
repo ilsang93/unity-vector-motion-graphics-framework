@@ -58,6 +58,7 @@ namespace VMG.Animation.Serialization
             clip.snapDivisor = dto.snapDivisor;
             clip.tracks.Clear();
             clip.events.Clear();
+            clip.userGroups.Clear();
             clip.hierarchy = new VMGHierarchySnapshot();
 
             if (dto.tracks != null)
@@ -74,6 +75,7 @@ namespace VMG.Animation.Serialization
                             fieldPath = td.fieldPath,
                         },
                         type = (VMGChannelType)td.channelType,
+                        groupId = td.groupId,
                     };
                     if (td.keys != null)
                     {
@@ -105,6 +107,19 @@ namespace VMG.Animation.Serialization
                     {
                         time = ed.time,
                         label = ed.label,
+                    });
+                }
+            }
+
+            if (dto.userGroups != null)
+            {
+                foreach (var gd in dto.userGroups)
+                {
+                    if (gd == null) continue;
+                    clip.userGroups.Add(new VMGTrackGroup
+                    {
+                        id = gd.id,
+                        name = gd.name,
                     });
                 }
             }

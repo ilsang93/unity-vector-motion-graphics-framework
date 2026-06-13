@@ -46,6 +46,15 @@ namespace VMG.Animation.Serialization
                 }
             }
 
+            if (clip.userGroups != null)
+            {
+                foreach (var g in clip.userGroups)
+                {
+                    if (g == null) continue;
+                    dto.userGroups.Add(new VMGTrackGroupDto { id = g.id, name = g.name });
+                }
+            }
+
             if (root != null)
             {
                 BuildHierarchyDto(root, dto);
@@ -62,6 +71,7 @@ namespace VMG.Animation.Serialization
                 componentTypeName = track.binding.componentTypeName,
                 fieldPath = track.binding.fieldPath,
                 channelType = (int)track.type,
+                groupId = track.groupId,
             };
             if (track.keys != null)
             {

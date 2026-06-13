@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.32.0] - 2026-06-14
+
+Track Groups round. User-defined composition groups arrive in the
+Timeline window so authors can bundle tracks from multiple
+GameObjects into one logical block (e.g. "Hero entrance" containing
+character + camera + UI tracks). Track area also gets vertical
+scrolling so long track lists fit inside the window. JSON clip
+format bumps to "2"; "1" still imports.
+
+### Added
+
+- **User-defined track groups.** `VMGAnimationClip.userGroups` —
+  list of `VMGTrackGroup { id, name }` entries. Each track carries
+  a `groupId` (0 = ungrouped).
+- **Three-level Timeline tree.** UserGroup header → auto (GO +
+  component) subgroup header → track row. Per-depth indent. Same
+  GameObject/component under two different user groups shows as
+  two independent auto subgroups with independent collapse states.
+  Empty user groups render their header so authors can create the
+  group first, then assign tracks.
+- **`+ Add Group` button** next to `+ Add Track` (creates an empty
+  named group via the new name-input popup).
+- **Right-click menus** for groups:
+  - Track row → `Assign to group >` submenu lists existing groups,
+    `(No group)`, and `New group...`.
+  - User group header → Rename / Delete group (keep tracks) /
+    Delete group and tracks.
+  - Auto subgroup header → `New group from these tracks...`
+    (one-shot: creates a user group and assigns every matching
+    `(GO, component)` track).
+- **Row-drag reorder.** Drag a user group or auto subgroup header
+  to a new slot; a yellow indicator shows the drop position.
+  Auto subgroups can also move into / out of user groups (track
+  `groupId` is re-stamped). Click without movement still toggles
+  collapse. Track rows themselves are not draggable yet.
+- **Vertical track scroll.** Long track lists now scroll inside the
+  Timeline window. Ruler / events row / playhead / horizontal
+  scrollbar / Add bar stay sticky. Plain wheel over the track area
+  scrolls vertically; Alt / Ctrl / Cmd + wheel zooms (zoom is
+  still the default behavior over the ruler).
+
+### Changed
+
+- **JSON clip format `formatVersion` "1" → "2"**. New `userGroups`
+  array and per-track `groupId` field. Importing format "1" data
+  still works (groupId defaults to 0, userGroups stays empty).
+- Collapse-state keys for auto subgroups now include the parent
+  user group id so the same `(GO, component)` under different
+  user groups can be collapsed independently.
+
+### Notes
+
+- DSL (`.vmgfx`) deliberately gets no group syntax this round.
+  Groups are a clip-editing concept; today's DSL builds
+  `VMGFx.Timeline` / `VMGFx.Animate` runtime objects (no group
+  notion). A DSL → `VMGAnimationClip` compile path is the
+  prerequisite, not in scope here.
+- Track row reorder is deferred. Cross-subgroup track moves would
+  break binding invariants; an intra-subgroup drag is queued for
+  a future polish round.
+
 ## [0.31.0] - 2026-06-14
 
 VectorSpriteRenderer World-renderer defaults round. New world-space

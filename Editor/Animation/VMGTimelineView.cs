@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -72,6 +73,22 @@ namespace VMG.EditorTools.Animation
         List<VMGTimelineSelection.Item> m_RubberInitialSelection;
         const float k_RubberStartThreshold = 3f;
 
+        // --- Row drag state (R1: auto-subgroup / user-group reorder) ---
+        // Armed by MouseDown on a header row, promoted to active once the
+        // pointer leaves the start-threshold radius. If MouseUp arrives
+        // while still armed-but-inactive, the click falls back to the
+        // header's existing toggle-collapse behavior.
+        bool m_RowDragArmed;
+        bool m_RowDragActive;
+        Vector2 m_RowDragStart;
+        Vector2 m_RowDragCurrent;
+        int m_RowDragSourceRow = -1;     // index into m_Rows captured at MouseDown
+        RowKind m_RowDragKind;
+        int m_RowDragSourceUserGroupId;  // for AutoGroup source: parent user group id
+        string m_RowDragSourceGroupKey;  // for AutoGroup source: BuildGroupKey result
+        int m_RowDragSourceUgId;         // for UserGroup source: the group's own id
+        const float k_RowDragStartThreshold = 4f;
+
         float m_PixelsPerSecond;
         float m_ScrollX;
 
@@ -89,17 +106,25 @@ namespace VMG.EditorTools.Animation
         // call chain and shouldn't reach for the animator on every frame.
         bool m_RecordingThisFrame;
 
-        // --- Group/flatten state (R2) ---
-        // Auto-derived from clip.tracks each Draw pass. A "row" is either a
-        // group header (depth=0) or a real track (depth=1). Collapsed groups
-        // hide their child rows from the flat list.
+        // --- Group/flatten state ---
+        // Auto-derived from clip.tracks each Draw pass. Three row kinds:
+        //   UserGroup header (depth 0, user-defined composition)
+        //   Auto subgroup header (depth 0 if no user group, depth 1 inside one)
+        //   Track row (depth = parent's depth + 1)
+        // Collapsed user groups hide their auto subgroups AND tracks; collapsed
+        // auto subgroups hide their tracks only.
+        enum RowKind { UserGroup, AutoGroup, Track }
+
         struct Row
         {
-            public bool isHeader;
-            public string groupKey;       // gameObjectPath + "|" + componentTypeName
-            public string headerLabel;    // pre-formatted "GO · ShortComp"
-            public int trackIdx;          // -1 when isHeader
-            public int groupFirstRowIdx;  // for child rows, the header row index
+            public RowKind kind;
+            public int depth;             // 0 = top-level header, 1 = nested header / top-level track, 2 = nested track
+            public string groupKey;       // collapse-set key (see BuildUserGroupKey / BuildGroupKey)
+            public string headerLabel;
+            public int trackIdx;          // -1 when not a Track row
+            public int userGroupId;       // 0 = no user group; for Track/AutoGroup this is the parent user group id
+            public int autoGroupHeaderRow; // for Track: row index of its auto subgroup header (or -1 if none drawn — shouldn't happen)
+            public int userGroupHeaderRow; // for Track/AutoGroup inside a user group: row index of the user-group header
         }
 
         readonly List<Row> m_Rows = new List<Row>();
@@ -119,7 +144,21 @@ namespace VMG.EditorTools.Animation
 
         bool m_PrefsLoaded;
 
-        public void Draw(VMGAnimator animator)
+        // Vertical scroll for the track area only. Ruler / events row /
+        // playhead / scrollbars stay sticky. Updated by mouse wheel and
+        // the right-side scrollbar; clamped each frame against the track
+        // area's overflow.
+        float m_ScrollY;
+        // Track area extents captured each Draw pass so input helpers
+        // (TryFindRow, hit-tests) can reject clicks above the ruler or
+        // below the horizontal scrollbar without piling extra args onto
+        // every callsite.
+        float m_TrackAreaTop;
+        float m_TrackAreaBottom;
+
+        public void Draw(VMGAnimator animator) => Draw(animator, -1f);
+
+        public void Draw(VMGAnimator animator, float maxBodyHeight)
         {
             var clip = animator.clip;
             if (clip == null) return;
@@ -137,14 +176,22 @@ namespace VMG.EditorTools.Animation
             RebuildRows(clip);
 
             int rowCount = m_Rows.Count;
-            float totalHeight = k_RulerHeight + k_EventRowHeight + Mathf.Max(rowCount, 1) * k_RowHeight + 2f + k_ScrollbarHeight;
+            float contentBodyHeight = Mathf.Max(rowCount, 1) * k_RowHeight; // tracks only
+            float naturalHeight = k_RulerHeight + k_EventRowHeight + contentBodyHeight + 2f + k_ScrollbarHeight;
+
+            // If caller supplied a hard cap (window-driven), honor it so
+            // the timeline fits inside the window and the track area
+            // scrolls vertically. Otherwise expand to fit all rows.
+            float totalHeight = maxBodyHeight > 0f ? Mathf.Max(maxBodyHeight, k_RulerHeight + k_EventRowHeight + k_RowHeight + k_ScrollbarHeight) : naturalHeight;
 
             var rect = GUILayoutUtility.GetRect(0f, totalHeight, GUILayout.ExpandWidth(true));
             EditorGUI.DrawRect(rect, k_BgColor);
             DrawBorder(rect);
 
             float tlLeft = rect.x + k_LabelWidth;
-            float tlRight = rect.xMax - k_RightPad;
+            // Reserve room on the right for the vertical scrollbar.
+            float vBarReserve = k_ScrollbarHeight; // same thickness as horizontal bar for symmetry
+            float tlRight = rect.xMax - k_RightPad - vBarReserve;
             float viewWidth = Mathf.Max(1f, tlRight - tlLeft);
             float duration = Mathf.Max(0.0001f, clip.duration);
 
@@ -182,13 +229,36 @@ namespace VMG.EditorTools.Animation
             GUI.Label(new Rect(rect.x + 4f, eventRowRect.y, k_LabelWidth - 6f, eventRowRect.height), "Events", EditorStyles.miniLabel);
             DrawEventsRow(eventRowRect, clip, windowEnd, pps, m_ScrollX);
 
-            float trackTop = eventRowRect.yMax;
+            // Track area sits below ruler + events, ends above the
+            // horizontal scrollbar. m_ScrollY shifts row drawing up; the
+            // visible height is `trackAreaHeight`.
+            float trackAreaTop = eventRowRect.yMax;
+            float trackAreaHeight = Mathf.Max(0f, (rect.y + totalHeight - k_ScrollbarHeight - 1f) - trackAreaTop);
+            float maxScrollY = Mathf.Max(0f, contentBodyHeight - trackAreaHeight);
+            m_ScrollY = Mathf.Clamp(m_ScrollY, 0f, maxScrollY);
+            float trackTop = trackAreaTop - m_ScrollY;
+            m_TrackAreaTop = trackAreaTop;
+            m_TrackAreaBottom = trackAreaTop + trackAreaHeight;
 
-            // Refresh hover state for Repaint (Repaint events do not carry
-            // mouseDelta, but mousePosition is still valid).
+            // Refresh hover state for Repaint. Mouse coordinates are in
+            // window space (unaffected by scroll); we pass the scrolled
+            // trackTop so row hit-tests stay consistent with what's drawn.
             UpdateHover(Event.current.mousePosition, rect, tlLeft, trackTop, clip, windowEnd, pps, m_ScrollX);
 
-            DrawTracks(rect, trackTop, tlLeft, viewWidth, clip, windowEnd, pps, m_ScrollX);
+            // Clip the track area so rows scrolled above/below the visible
+            // band don't paint over ruler / scrollbar.
+            var trackClipRect = new Rect(rect.x, trackAreaTop, rect.width, trackAreaHeight);
+            GUI.BeginClip(trackClipRect, Vector2.zero, Vector2.zero, false);
+            // GUI.BeginClip shifts the coordinate origin: subtract the
+            // clip rect's position from anything we draw inside.
+            float clipOffsetY = trackAreaTop;
+            var clippedOuter = new Rect(rect.x, rect.y - clipOffsetY, rect.width, totalHeight);
+            DrawTracks(clippedOuter, trackTop - clipOffsetY, tlLeft, viewWidth, clip, windowEnd, pps, m_ScrollX);
+            GUI.EndClip();
+            // Drop indicator draws outside the clip but is clamped to the
+            // track area below — keeps the line from being chopped off
+            // when the source row lives at the very top/bottom edge.
+            DrawRowDropIndicator(rect, trackTop);
 
             // Dim the headroom (duration .. windowEnd) so it reads as "out of
             // clip" — keys still drag freely there, and dropping a key in
@@ -200,6 +270,10 @@ namespace VMG.EditorTools.Animation
 
             float scrollbarY = rect.y + totalHeight - k_ScrollbarHeight - 1f;
             DrawHorizontalScrollbar(new Rect(tlLeft, scrollbarY, viewWidth, k_ScrollbarHeight), viewWidth, contentWidth);
+            DrawVerticalScrollbar(new Rect(rect.xMax - vBarReserve - 1f, trackAreaTop, vBarReserve, trackAreaHeight), trackAreaHeight, contentBodyHeight);
+
+            // Mouse wheel over the track area scrolls vertically.
+            HandleVerticalWheel(trackClipRect, maxScrollY);
 
             HandleInput(rect, tlLeft, viewWidth, trackTop, clip, windowEnd, animator, scrubRect, eventRowRect, pps, m_ScrollX);
 
@@ -364,11 +438,17 @@ namespace VMG.EditorTools.Animation
         // Background tint for group header rows. Slightly darker than the
         // banded track row so the visual hierarchy reads at a glance.
         static readonly Color k_GroupHeaderColor = new Color(0f, 0f, 0f, 0.18f);
+        // User-group header sits one level above the auto subgroup; slightly
+        // darker + cooler tint so it reads as the outer container.
+        static readonly Color k_UserGroupHeaderColor = new Color(0.18f, 0.22f, 0.30f, 0.55f);
         static readonly Color k_CaretColor = new Color(0.85f, 0.85f, 0.85f, 1f);
         // Half-size diamonds drawn on collapsed group headers as a summary
         // of hidden child keys. Visual only — they don't take input.
         const float k_SummaryKeyHalfWidth = 3f;
         const float k_SummaryKeyHalfHeight = 4f;
+        // Per-depth indent for nested headers / tracks. Caret+label area
+        // for a row at depth d shifts right by d * k_GroupIndent.
+        const float k_GroupIndent = 12f;
         static readonly Color k_SummaryKeyColor = new Color(0.86f, 0.86f, 0.86f, 0.55f);
 
         void DrawTracks(Rect outer, float top, float tlLeft, float tlWidth, VMGAnimationClip clip, float duration, float pps, float scrollX)
@@ -388,13 +468,17 @@ namespace VMG.EditorTools.Animation
                 }
 
                 var row = m_Rows[i];
-                if (row.isHeader)
+                if (row.kind == RowKind.UserGroup)
+                {
+                    DrawUserGroupHeaderRow(rowRect, tlLeft, tlWidth, clip, row, duration, pps, scrollX, hovered);
+                }
+                else if (row.kind == RowKind.AutoGroup)
                 {
                     DrawGroupHeaderRow(rowRect, tlLeft, tlWidth, clip, row, duration, pps, scrollX, hovered);
                 }
                 else
                 {
-                    DrawChildTrackRow(rowRect, tlLeft, tlWidth, clip, row.trackIdx, i, selTrack, duration, pps, scrollX, hovered);
+                    DrawChildTrackRow(rowRect, tlLeft, tlWidth, clip, row.trackIdx, i, selTrack, duration, pps, scrollX, hovered, row.depth);
                 }
             }
         }
@@ -404,10 +488,36 @@ namespace VMG.EditorTools.Animation
             EditorGUI.DrawRect(rowRect, k_GroupHeaderColor);
             if (hovered) EditorGUI.DrawRect(rowRect, k_RowHoverColor);
 
+            float indent = row.depth * k_GroupIndent;
             // Caret + bold label area.
             bool collapsed = IsGroupCollapsed(clip, row.groupKey);
-            var caretRect = new Rect(rowRect.x + 2f, rowRect.y, k_GroupCaretWidth, rowRect.height);
+            var caretRect = new Rect(rowRect.x + 2f + indent, rowRect.y, k_GroupCaretWidth, rowRect.height);
             var caret = new GUIContent(collapsed ? "▶" : "▼"); // ▶ / ▼
+            var caretStyle = EditorStyles.miniLabel;
+            var prevColor = GUI.color;
+            GUI.color = k_CaretColor;
+            GUI.Label(caretRect, caret, caretStyle);
+            GUI.color = prevColor;
+
+            var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f + indent, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f - indent, rowRect.height);
+            GUI.Label(labelRect, row.headerLabel, EditorStyles.boldLabel);
+
+            // Collapsed: draw summary diamonds for hidden child keys.
+            if (collapsed)
+            {
+                var keysRect = new Rect(tlLeft, rowRect.y, tlWidth, rowRect.height);
+                DrawGroupSummaryKeys(keysRect, clip, row, duration, pps, scrollX);
+            }
+        }
+
+        void DrawUserGroupHeaderRow(Rect rowRect, float tlLeft, float tlWidth, VMGAnimationClip clip, Row row, float duration, float pps, float scrollX, bool hovered)
+        {
+            EditorGUI.DrawRect(rowRect, k_UserGroupHeaderColor);
+            if (hovered) EditorGUI.DrawRect(rowRect, k_RowHoverColor);
+
+            bool collapsed = IsGroupCollapsed(clip, row.groupKey);
+            var caretRect = new Rect(rowRect.x + 2f, rowRect.y, k_GroupCaretWidth, rowRect.height);
+            var caret = new GUIContent(collapsed ? "▶" : "▼");
             var caretStyle = EditorStyles.miniLabel;
             var prevColor = GUI.color;
             GUI.color = k_CaretColor;
@@ -417,15 +527,14 @@ namespace VMG.EditorTools.Animation
             var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f, rowRect.height);
             GUI.Label(labelRect, row.headerLabel, EditorStyles.boldLabel);
 
-            // Collapsed: draw summary diamonds for hidden child keys.
             if (collapsed)
             {
                 var keysRect = new Rect(tlLeft, rowRect.y, tlWidth, rowRect.height);
-                DrawGroupSummaryKeys(keysRect, clip, row.groupKey, duration, pps, scrollX);
+                DrawUserGroupSummaryKeys(keysRect, clip, row.userGroupId, duration, pps, scrollX);
             }
         }
 
-        void DrawChildTrackRow(Rect rowRect, float tlLeft, float tlWidth, VMGAnimationClip clip, int trackIdx, int rowIdx, int selTrack, float duration, float pps, float scrollX, bool hovered)
+        void DrawChildTrackRow(Rect rowRect, float tlLeft, float tlWidth, VMGAnimationClip clip, int trackIdx, int rowIdx, int selTrack, float duration, float pps, float scrollX, bool hovered, int depth)
         {
             // Banded rows (Unity Animation pattern: alternating subtle tint).
             if (rowIdx % 2 == 1) EditorGUI.DrawRect(rowRect, k_AltRowColor);
@@ -436,8 +545,11 @@ namespace VMG.EditorTools.Animation
                 EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, 2f, rowRect.height), k_TrackSelectedBorder);
             }
 
-            // Indent child rows under their group header.
-            var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f, rowRect.height);
+            // Indent child rows under their auto-subgroup header (depth - 1
+            // would land at the auto header; depth places the label one
+            // step further in).
+            float indent = depth * k_GroupIndent;
+            var labelRect = new Rect(rowRect.x + k_GroupCaretWidth + 4f + indent, rowRect.y, k_LabelWidth - k_GroupCaretWidth - 6f - indent, rowRect.height);
             if (clip.tracks != null && trackIdx >= 0 && trackIdx < clip.tracks.Count && clip.tracks[trackIdx] != null)
             {
                 var track = clip.tracks[trackIdx];
@@ -451,7 +563,7 @@ namespace VMG.EditorTools.Animation
             }
         }
 
-        void DrawGroupSummaryKeys(Rect rect, VMGAnimationClip clip, string groupKey, float duration, float pps, float scrollX)
+        void DrawGroupSummaryKeys(Rect rect, VMGAnimationClip clip, Row headerRow, float duration, float pps, float scrollX)
         {
             if (clip.tracks == null) return;
             float cy = rect.y + rect.height * 0.5f;
@@ -459,7 +571,28 @@ namespace VMG.EditorTools.Animation
             {
                 var track = clip.tracks[ti];
                 if (track == null) continue;
-                if (BuildGroupKey(track.binding) != groupKey) continue;
+                if (track.groupId != headerRow.userGroupId) continue;
+                if (BuildGroupKey(track.binding, headerRow.userGroupId) != headerRow.groupKey) continue;
+                if (track.keys == null) continue;
+                for (int ki = 0; ki < track.keys.Count; ki++)
+                {
+                    float t = Mathf.Clamp(track.keys[ki].time, 0f, duration);
+                    float cx = TimeToX(t, rect.x, pps, scrollX);
+                    if (cx < rect.x - k_SummaryKeyHalfWidth - 2f || cx > rect.xMax + k_SummaryKeyHalfWidth + 2f) continue;
+                    DrawDiamond(cx, cy, k_SummaryKeyHalfWidth, k_SummaryKeyHalfHeight, k_SummaryKeyColor);
+                }
+            }
+        }
+
+        void DrawUserGroupSummaryKeys(Rect rect, VMGAnimationClip clip, int userGroupId, float duration, float pps, float scrollX)
+        {
+            if (clip.tracks == null) return;
+            float cy = rect.y + rect.height * 0.5f;
+            for (int ti = 0; ti < clip.tracks.Count; ti++)
+            {
+                var track = clip.tracks[ti];
+                if (track == null) continue;
+                if (track.groupId != userGroupId) continue;
                 if (track.keys == null) continue;
                 for (int ki = 0; ki < track.keys.Count; ki++)
                 {
@@ -481,11 +614,14 @@ namespace VMG.EditorTools.Animation
             return $"{index}: {field}";
         }
 
-        // Group key = "gameObjectPath|componentTypeName". Display label uses
-        // "self" for empty path and the short type name (last token after the
-        // last dot, before any comma) for the assembly-qualified component.
-        static string BuildGroupKey(VMGChannelBinding b) =>
-            (b.gameObjectPath ?? string.Empty) + "|" + (b.componentTypeName ?? string.Empty);
+        // Auto subgroup key = "user{id}|gameObjectPath|componentTypeName".
+        // Including the user group id makes the same (GO, component) under
+        // two different user groups two distinct auto subgroups, so their
+        // collapse states stay independent.
+        static string BuildGroupKey(VMGChannelBinding b, int userGroupId) =>
+            "u" + userGroupId + "|" + (b.gameObjectPath ?? string.Empty) + "|" + (b.componentTypeName ?? string.Empty);
+
+        static string BuildUserGroupKey(int userGroupId) => "ug" + userGroupId;
 
         static string BuildGroupLabel(VMGChannelBinding b)
         {
@@ -516,43 +652,88 @@ namespace VMG.EditorTools.Animation
 
         void RebuildRows(VMGAnimationClip clip)
         {
+            m_LastClip = clip;
             m_Rows.Clear();
             if (clip == null || clip.tracks == null) return;
             var collapsed = GetCollapsedSet(clip);
 
-            // Track-order grouping: keep tracks in their list order, start a
-            // new group whenever the (GO, component) key changes. This means
-            // re-grouping never reorders the underlying list, so trackIdx
+            // Phase 1: ungrouped tracks (groupId == 0) keep the existing
+            // top-level auto-grouping. Track order is preserved so trackIdx
             // semantics stay intact for selection, drag, undo.
+            EmitTracksForUserGroup(clip, 0, /*userHeaderRow*/ -1, /*depthOffset*/ 0, collapsed);
+
+            // Phase 2: each user group becomes a header row, followed by
+            // (auto-subgroup header, child tracks) for its members. Empty
+            // user groups still get a header row (user may have created the
+            // group first, intending to assign tracks later).
+            if (clip.userGroups != null)
+            {
+                for (int gi = 0; gi < clip.userGroups.Count; gi++)
+                {
+                    var g = clip.userGroups[gi];
+                    if (g == null) continue;
+                    int userHeaderRow = m_Rows.Count;
+                    string ugKey = BuildUserGroupKey(g.id);
+                    m_Rows.Add(new Row
+                    {
+                        kind = RowKind.UserGroup,
+                        depth = 0,
+                        groupKey = ugKey,
+                        headerLabel = string.IsNullOrEmpty(g.name) ? "(unnamed group)" : g.name,
+                        trackIdx = -1,
+                        userGroupId = g.id,
+                        autoGroupHeaderRow = -1,
+                        userGroupHeaderRow = userHeaderRow,
+                    });
+                    if (collapsed.Contains(ugKey)) continue;
+                    EmitTracksForUserGroup(clip, g.id, userHeaderRow, /*depthOffset*/ 1, collapsed);
+                }
+            }
+        }
+
+        // Emit auto-subgroup headers + track rows for every track whose
+        // groupId matches `userGroupId`. Used both for ungrouped tracks
+        // (userGroupId=0, depthOffset=0) and for tracks inside a user group
+        // (depthOffset=1).
+        void EmitTracksForUserGroup(VMGAnimationClip clip, int userGroupId, int userHeaderRow, int depthOffset, HashSet<string> collapsed)
+        {
             string activeKey = null;
-            int activeHeaderRow = -1;
+            int activeAutoHeaderRow = -1;
             for (int ti = 0; ti < clip.tracks.Count; ti++)
             {
                 var track = clip.tracks[ti];
                 if (track == null) continue;
-                string key = BuildGroupKey(track.binding);
+                if (track.groupId != userGroupId) continue;
+
+                string key = BuildGroupKey(track.binding, userGroupId);
                 if (key != activeKey)
                 {
                     activeKey = key;
-                    activeHeaderRow = m_Rows.Count;
+                    activeAutoHeaderRow = m_Rows.Count;
                     m_Rows.Add(new Row
                     {
-                        isHeader = true,
+                        kind = RowKind.AutoGroup,
+                        depth = depthOffset,
                         groupKey = key,
                         headerLabel = BuildGroupLabel(track.binding),
                         trackIdx = -1,
-                        groupFirstRowIdx = activeHeaderRow,
+                        userGroupId = userGroupId,
+                        autoGroupHeaderRow = activeAutoHeaderRow,
+                        userGroupHeaderRow = userHeaderRow,
                     });
                 }
                 if (!collapsed.Contains(key))
                 {
                     m_Rows.Add(new Row
                     {
-                        isHeader = false,
+                        kind = RowKind.Track,
+                        depth = depthOffset + 1,
                         groupKey = key,
                         headerLabel = null,
                         trackIdx = ti,
-                        groupFirstRowIdx = activeHeaderRow,
+                        userGroupId = userGroupId,
+                        autoGroupHeaderRow = activeAutoHeaderRow,
+                        userGroupHeaderRow = userHeaderRow,
                     });
                 }
             }
@@ -653,6 +834,275 @@ namespace VMG.EditorTools.Animation
             EditorGUI.DrawRect(new Rect(r.xMax - 1f, r.y, 1f, r.height), k_RubberBorder);
         }
 
+        // --- Row drag (auto-subgroup / user-group reorder) ---
+
+        static readonly Color k_RowDropIndicatorColor = new Color(1f, 0.85f, 0.2f, 1f);
+
+        // Computes which slot the pointer is over while a row drag is
+        // active. Returns false when the drop would be a no-op. The
+        // resulting slot is interpreted by ApplyRowDrag.
+        struct RowDropTarget
+        {
+            // For AutoGroup source: index into clip.userGroups (-1 for
+            // ungrouped) the moved subgroup will land under, plus the
+            // row index (relative to m_Rows) just *before* the drop.
+            // For UserGroup source: position in clip.userGroups list.
+            public bool valid;
+            public int destUserGroupId;       // 0 = ungrouped (top-level)
+            public int insertAtRow;           // -1 = end of section
+            public float indicatorY;
+        }
+
+        RowDropTarget ComputeRowDropTarget(VMGAnimationClip clip, Vector2 mousePos, float trackTop)
+        {
+            var result = new RowDropTarget { valid = false };
+            if (m_RowDragSourceRow < 0 || m_Rows.Count == 0) return result;
+
+            // Determine which row gap the pointer is closest to. Each row
+            // contributes a top-half "before" slot and a bottom-half
+            // "after" slot; we resolve to a single insertion index in
+            // m_Rows (between rows).
+            int rowCount = m_Rows.Count;
+            float relY = mousePos.y - trackTop;
+            int slotIdx = Mathf.Clamp(Mathf.RoundToInt(relY / k_RowHeight), 0, rowCount);
+            float indicatorY = trackTop + slotIdx * k_RowHeight;
+
+            if (m_RowDragKind == RowKind.UserGroup)
+            {
+                // User-group reorder: snap the indicator to gaps *between*
+                // user-group headers (or at the very start / end of the
+                // user-group section). Ungrouped section is row 0..N where
+                // the first user-group header begins. Below the last user
+                // group is the bottom.
+                int firstUserHeader = -1;
+                for (int i = 0; i < rowCount; i++)
+                {
+                    if (m_Rows[i].kind == RowKind.UserGroup) { firstUserHeader = i; break; }
+                }
+                if (firstUserHeader < 0)
+                {
+                    // No other user groups — only the dragged one. No-op.
+                    return result;
+                }
+                // Pull the slot up if it's inside the ungrouped section.
+                if (slotIdx < firstUserHeader) slotIdx = firstUserHeader;
+                indicatorY = trackTop + slotIdx * k_RowHeight;
+
+                // Find the target list position in clip.userGroups by
+                // counting user-group headers at or after slotIdx.
+                int destPos = 0;
+                for (int i = 0; i < slotIdx && i < rowCount; i++)
+                {
+                    if (m_Rows[i].kind == RowKind.UserGroup) destPos++;
+                }
+                // No-op when dropping at the same position the source
+                // already occupies. The source is at m_RowDragSourceUgId
+                // in clip.userGroups.
+                int srcPos = -1;
+                for (int i = 0; i < clip.userGroups.Count; i++)
+                {
+                    if (clip.userGroups[i] != null && clip.userGroups[i].id == m_RowDragSourceUgId)
+                    {
+                        srcPos = i;
+                        break;
+                    }
+                }
+                if (srcPos < 0) return result;
+                if (destPos == srcPos || destPos == srcPos + 1) return result;
+                result.valid = true;
+                result.destUserGroupId = -1;       // unused for UG reorder
+                result.insertAtRow = slotIdx;
+                result.indicatorY = indicatorY;
+                return result;
+            }
+
+            // AutoGroup source: figure out which user group (or ungrouped)
+            // the slot falls into.
+            int targetUserGroupId = 0;
+            for (int i = 0; i < slotIdx && i < rowCount; i++)
+            {
+                var r = m_Rows[i];
+                if (r.kind == RowKind.UserGroup) targetUserGroupId = r.userGroupId;
+            }
+            // If the slot sits between/below user-group headers, we still
+            // assign to the last-seen userGroupId. Dropping right *on* a
+            // user-group header row's own line lands inside that group at
+            // its top.
+            // Reject the no-op: dropping the subgroup at a slot adjacent
+            // to its own current position with the same parent group.
+            int srcRowIdx = m_RowDragSourceRow;
+            int srcMemberCount = 0;
+            for (int i = srcRowIdx; i < rowCount; i++)
+            {
+                if (i == srcRowIdx) { srcMemberCount++; continue; }
+                if (m_Rows[i].kind == RowKind.Track && m_Rows[i].autoGroupHeaderRow == srcRowIdx) srcMemberCount++;
+                else break;
+            }
+            int srcEnd = srcRowIdx + srcMemberCount; // exclusive
+            if (targetUserGroupId == m_RowDragSourceUserGroupId &&
+                (slotIdx == srcRowIdx || slotIdx == srcEnd))
+            {
+                return result;
+            }
+
+            result.valid = true;
+            result.destUserGroupId = targetUserGroupId;
+            result.insertAtRow = slotIdx;
+            result.indicatorY = indicatorY;
+            return result;
+        }
+
+        void DrawRowDropIndicator(Rect outer, float trackTop)
+        {
+            if (!m_RowDragActive) return;
+            var clip = ResolveActiveClip();
+            if (clip == null) return;
+            var target = ComputeRowDropTarget(clip, m_RowDragCurrent, trackTop);
+            if (!target.valid) return;
+            // Clamp Y to the visible track band so the line stays inside
+            // the scrolled viewport.
+            float y = Mathf.Clamp(target.indicatorY, m_TrackAreaTop, m_TrackAreaBottom - 2f);
+            var lineRect = new Rect(outer.x + 2f, y - 1f, outer.width - 4f, 2f);
+            EditorGUI.DrawRect(lineRect, k_RowDropIndicatorColor);
+        }
+
+        // The view doesn't store the clip directly, but every code path
+        // here is called from Draw(animator) which already has it. We
+        // stash the most recent clip when RebuildRows runs.
+        VMGAnimationClip m_LastClip;
+        VMGAnimationClip ResolveActiveClip() => m_LastClip;
+
+        void CommitRowDrag(VMGAnimationClip clip, Vector2 mousePos, float trackTop)
+        {
+            var target = ComputeRowDropTarget(clip, mousePos, trackTop);
+            if (!target.valid) return;
+            if (m_RowDragKind == RowKind.UserGroup)
+            {
+                ApplyUserGroupReorder(clip, target.insertAtRow);
+            }
+            else if (m_RowDragKind == RowKind.AutoGroup)
+            {
+                ApplyAutoGroupMove(clip, target.destUserGroupId, target.insertAtRow);
+            }
+        }
+
+        void ApplyUserGroupReorder(VMGAnimationClip clip, int slotIdx)
+        {
+            if (clip == null || clip.userGroups == null) return;
+            int srcPos = -1;
+            for (int i = 0; i < clip.userGroups.Count; i++)
+            {
+                if (clip.userGroups[i] != null && clip.userGroups[i].id == m_RowDragSourceUgId)
+                {
+                    srcPos = i;
+                    break;
+                }
+            }
+            if (srcPos < 0) return;
+            int destPos = 0;
+            for (int i = 0; i < slotIdx && i < m_Rows.Count; i++)
+            {
+                if (m_Rows[i].kind == RowKind.UserGroup) destPos++;
+            }
+            if (destPos == srcPos || destPos == srcPos + 1) return;
+            Undo.RecordObject(clip, "Reorder VMG Group");
+            var g = clip.userGroups[srcPos];
+            clip.userGroups.RemoveAt(srcPos);
+            int insertIdx = destPos > srcPos ? destPos - 1 : destPos;
+            insertIdx = Mathf.Clamp(insertIdx, 0, clip.userGroups.Count);
+            clip.userGroups.Insert(insertIdx, g);
+            VMGTimelineSelection.MarkDirty(clip);
+        }
+
+        // Move all tracks belonging to the source auto subgroup to the
+        // destination user group's section, contiguous block, at the
+        // computed slot. Source tracks are identified by groupId + the
+        // GroupKey captured at MouseDown so a single (GO, comp) bundle
+        // moves as one.
+        void ApplyAutoGroupMove(VMGAnimationClip clip, int destUserGroupId, int slotIdx)
+        {
+            if (clip == null || clip.tracks == null) return;
+
+            // 1. Collect source track indices (in current list order).
+            var srcIndices = new List<int>();
+            for (int ti = 0; ti < clip.tracks.Count; ti++)
+            {
+                var t = clip.tracks[ti];
+                if (t == null) continue;
+                if (t.groupId != m_RowDragSourceUserGroupId) continue;
+                if (BuildGroupKey(t.binding, m_RowDragSourceUserGroupId) != m_RowDragSourceGroupKey) continue;
+                srcIndices.Add(ti);
+            }
+            if (srcIndices.Count == 0) return;
+
+            // 2. Compute the *target track index* the source block should
+            // land at, before removal. Walk the destination section's
+            // existing tracks in order and stop at the slot the user
+            // pointed at.
+            //
+            // For the destination user group, list every track with that
+            // groupId. The slot index relative to m_Rows tells us which
+            // visible track-or-header row the drop sits after; we
+            // translate that back to a clip.tracks index.
+            int destInsertTrackIdx;
+            if (slotIdx >= m_Rows.Count)
+            {
+                destInsertTrackIdx = clip.tracks.Count;
+            }
+            else
+            {
+                // Find the nearest track row at or after slotIdx that's
+                // in the destination user group; insert before it.
+                int idx = -1;
+                for (int i = slotIdx; i < m_Rows.Count; i++)
+                {
+                    var r = m_Rows[i];
+                    if (r.kind == RowKind.Track && clip.tracks[r.trackIdx] != null &&
+                        clip.tracks[r.trackIdx].groupId == destUserGroupId)
+                    {
+                        idx = r.trackIdx;
+                        break;
+                    }
+                }
+                if (idx < 0)
+                {
+                    // No track row after the slot in the destination
+                    // section — append at the end of that section.
+                    int lastInDest = -1;
+                    for (int ti = 0; ti < clip.tracks.Count; ti++)
+                    {
+                        if (clip.tracks[ti] != null && clip.tracks[ti].groupId == destUserGroupId)
+                            lastInDest = ti;
+                    }
+                    destInsertTrackIdx = lastInDest + 1;
+                }
+                else
+                {
+                    destInsertTrackIdx = idx;
+                }
+            }
+
+            // 3. Snapshot source tracks, re-stamp their groupId, splice.
+            Undo.RecordObject(clip, "Reorder VMG Tracks");
+            var moved = new List<VMGAnimationTrack>(srcIndices.Count);
+            foreach (var i in srcIndices) moved.Add(clip.tracks[i]);
+            foreach (var t in moved) t.groupId = destUserGroupId;
+
+            // Remove from highest to lowest so earlier indices stay valid.
+            for (int i = srcIndices.Count - 1; i >= 0; i--)
+            {
+                int rem = srcIndices[i];
+                clip.tracks.RemoveAt(rem);
+                if (rem < destInsertTrackIdx) destInsertTrackIdx--;
+            }
+            destInsertTrackIdx = Mathf.Clamp(destInsertTrackIdx, 0, clip.tracks.Count);
+            for (int i = 0; i < moved.Count; i++)
+            {
+                clip.tracks.Insert(destInsertTrackIdx + i, moved[i]);
+            }
+            VMGTimelineSelection.MarkDirty(clip);
+        }
+
         void UpdateRubberSelection(VMGAnimationClip clip, float tlLeft, float pps, float scrollX, float duration, float trackTop)
         {
             var box = GetRubberRect();
@@ -665,7 +1115,7 @@ namespace VMG.EditorTools.Animation
             for (int ri = 0; ri < m_Rows.Count; ri++)
             {
                 var row = m_Rows[ri];
-                if (row.isHeader) continue;
+                if (row.kind != RowKind.Track) continue;
                 if (clip.tracks == null || row.trackIdx < 0 || row.trackIdx >= clip.tracks.Count) continue;
                 var track = clip.tracks[row.trackIdx];
                 if (track == null || track.keys == null) continue;
@@ -691,6 +1141,12 @@ namespace VMG.EditorTools.Animation
             var e = Event.current;
             if (e.type != EventType.ScrollWheel) return;
             if (!hotRect.Contains(e.mousePosition)) return;
+            // Plain wheel scrolls tracks; modifier wheel zooms. Matches
+            // Unity Animation conventions and lets users navigate long
+            // track lists without accidentally changing zoom.
+            bool overRuler = rulerRect.Contains(e.mousePosition);
+            bool zoomModifier = e.alt || e.control || e.command;
+            if (!overRuler && !zoomModifier) return;
 
             float mouseTime = XToTime(e.mousePosition.x, rulerRect.x, currentPps, m_ScrollX);
             float zoom = e.delta.y < 0f ? k_ZoomStep : 1f / k_ZoomStep;
@@ -731,6 +1187,26 @@ namespace VMG.EditorTools.Animation
             }
             var barRect = new Rect(rect.x + fitW + 4f, rect.y, rect.width - fitW - 4f, rect.height);
             m_ScrollX = GUI.HorizontalScrollbar(barRect, m_ScrollX, viewWidth, 0f, contentWidth);
+        }
+
+        void DrawVerticalScrollbar(Rect rect, float viewHeight, float contentHeight)
+        {
+            if (contentHeight <= viewHeight + 0.5f) return;
+            m_ScrollY = GUI.VerticalScrollbar(rect, m_ScrollY, viewHeight, 0f, contentHeight);
+        }
+
+        // Mouse-wheel scroll over the track area. ScrollWheel events carry
+        // a delta.y in IMGUI's "lines" convention (~3 px per notch), so we
+        // scale to a comfortable per-tick step.
+        void HandleVerticalWheel(Rect hotRect, float maxScrollY)
+        {
+            var e = Event.current;
+            if (e.type != EventType.ScrollWheel) return;
+            if (!hotRect.Contains(e.mousePosition)) return;
+            if (maxScrollY <= 0f) return;
+            m_ScrollY = Mathf.Clamp(m_ScrollY + e.delta.y * 10f, 0f, maxScrollY);
+            e.Use();
+            GUI.changed = true;
         }
 
         // ---------- input ----------
@@ -850,16 +1326,29 @@ namespace VMG.EditorTools.Animation
                     if (TryFindRow(e.mousePosition, trackTop, out int rowIdx))
                     {
                         var row = m_Rows[rowIdx];
-                        if (row.isHeader)
+                        if (row.kind != RowKind.Track)
                         {
-                            // Any LMB anywhere on the group header toggles
-                            // collapse. Right-click is reserved for a
-                            // future per-group context menu (no-op for now).
+                            // LMB on header: arm a potential row drag.
+                            // MouseUp without drag movement falls back to
+                            // toggle-collapse. RMB opens the group context
+                            // menu (Phase 3 actions).
                             if (e.button == 0)
                             {
-                                ToggleGroupCollapsed(clip, row.groupKey);
+                                m_RowDragArmed = true;
+                                m_RowDragActive = false;
+                                m_RowDragStart = e.mousePosition;
+                                m_RowDragCurrent = e.mousePosition;
+                                m_RowDragSourceRow = rowIdx;
+                                m_RowDragKind = row.kind;
+                                m_RowDragSourceUserGroupId = row.userGroupId;
+                                m_RowDragSourceGroupKey = row.groupKey;
+                                m_RowDragSourceUgId = row.kind == RowKind.UserGroup ? row.userGroupId : 0;
                                 e.Use();
-                                GUI.changed = true;
+                            }
+                            else if (e.button == 1)
+                            {
+                                ShowGroupHeaderContextMenu(clip, row);
+                                e.Use();
                             }
                             break;
                         }
@@ -948,6 +1437,20 @@ namespace VMG.EditorTools.Animation
                 }
                 case EventType.MouseDrag:
                 {
+                    if (m_RowDragArmed || m_RowDragActive)
+                    {
+                        if (!m_RowDragActive && Vector2.Distance(e.mousePosition, m_RowDragStart) >= k_RowDragStartThreshold)
+                        {
+                            m_RowDragActive = true;
+                        }
+                        if (m_RowDragActive)
+                        {
+                            m_RowDragCurrent = e.mousePosition;
+                            e.Use();
+                            GUI.changed = true;
+                        }
+                        return;
+                    }
                     if (m_Scrubbing)
                     {
                         Playback?.EnsureBaselineCaptured();
@@ -1031,6 +1534,28 @@ namespace VMG.EditorTools.Animation
                 }
                 case EventType.MouseUp:
                 {
+                    if (m_RowDragArmed || m_RowDragActive)
+                    {
+                        if (!m_RowDragActive)
+                        {
+                            // No movement past threshold: original click
+                            // semantics — toggle collapse on the header row.
+                            if (m_RowDragSourceRow >= 0 && m_RowDragSourceRow < m_Rows.Count)
+                            {
+                                var srcRow = m_Rows[m_RowDragSourceRow];
+                                ToggleGroupCollapsed(clip, srcRow.groupKey);
+                            }
+                        }
+                        else
+                        {
+                            CommitRowDrag(clip, e.mousePosition, trackTop);
+                        }
+                        m_RowDragArmed = false;
+                        m_RowDragActive = false;
+                        m_RowDragSourceRow = -1;
+                        e.Use();
+                        GUI.changed = true;
+                    }
                     if (m_Scrubbing)
                     {
                         m_Scrubbing = false;
@@ -1108,7 +1633,7 @@ namespace VMG.EditorTools.Animation
             {
                 m_HoverRow = rowIdx;
                 var row = m_Rows[rowIdx];
-                if (!row.isHeader && mousePos.x >= tlLeft
+                if (row.kind == RowKind.Track && mousePos.x >= tlLeft
                     && TryHitKey(clip, row.trackIdx, mousePos, tlLeft, pps, scrollX, duration, out int keyIdx))
                 {
                     m_HoverTrack = row.trackIdx;
@@ -1125,6 +1650,10 @@ namespace VMG.EditorTools.Animation
         bool TryFindRow(Vector2 pos, float trackTop, out int rowIdx)
         {
             rowIdx = -1;
+            // Reject clicks outside the track area (above the ruler or
+            // below the horizontal scrollbar). m_TrackAreaTop/Bottom are
+            // captured each Draw pass.
+            if (pos.y < m_TrackAreaTop || pos.y >= m_TrackAreaBottom) return false;
             if (pos.y < trackTop) return false;
             int idx = Mathf.FloorToInt((pos.y - trackTop) / k_RowHeight);
             if (idx < 0 || idx >= m_Rows.Count) return false;
@@ -1139,7 +1668,7 @@ namespace VMG.EditorTools.Animation
             trackIdx = -1;
             if (!TryFindRow(pos, trackTop, out int rowIdx)) return false;
             var row = m_Rows[rowIdx];
-            if (row.isHeader) return false;
+            if (row.kind != RowKind.Track) return false;
             trackIdx = row.trackIdx;
             return true;
         }
@@ -1236,6 +1765,11 @@ namespace VMG.EditorTools.Animation
 
             menu.AddSeparator(string.Empty);
 
+            // Section: Group assignment
+            BuildAssignToGroupSubmenu(menu, clip, trackIdx);
+
+            menu.AddSeparator(string.Empty);
+
             // Section: Track
             menu.AddItem(new GUIContent("Delete Track"), false, () =>
             {
@@ -1247,6 +1781,161 @@ namespace VMG.EditorTools.Animation
             });
 
             menu.ShowAsContext();
+        }
+
+        // "Assign to group >" submenu on the per-track right-click. Lists
+        // every existing user group + a "(No group)" option + "New group...".
+        // Check mark shows the track's current groupId.
+        void BuildAssignToGroupSubmenu(GenericMenu menu, VMGAnimationClip clip, int trackIdx)
+        {
+            if (trackIdx < 0 || trackIdx >= clip.tracks.Count) return;
+            var track = clip.tracks[trackIdx];
+            if (track == null) return;
+            int currentGid = track.groupId;
+
+            menu.AddItem(new GUIContent("Assign to group/(No group)"), currentGid == 0, () =>
+            {
+                if (track.groupId == 0) return;
+                Undo.RecordObject(clip, "Assign Track Group");
+                track.groupId = 0;
+                VMGTimelineSelection.MarkDirty(clip);
+            });
+
+            if (clip.userGroups != null)
+            {
+                foreach (var g in clip.userGroups)
+                {
+                    if (g == null) continue;
+                    int gid = g.id;
+                    string label = string.IsNullOrEmpty(g.name) ? "(unnamed)" : g.name;
+                    menu.AddItem(new GUIContent($"Assign to group/{label}"), currentGid == gid, () =>
+                    {
+                        if (track.groupId == gid) return;
+                        Undo.RecordObject(clip, "Assign Track Group");
+                        track.groupId = gid;
+                        VMGTimelineSelection.MarkDirty(clip);
+                    });
+                }
+            }
+
+            menu.AddSeparator("Assign to group/");
+            menu.AddItem(new GUIContent("Assign to group/New group..."), false, () =>
+            {
+                PromptAndCreateGroup(clip, name =>
+                {
+                    Undo.RecordObject(clip, "Assign Track to New Group");
+                    var g = new VMGTrackGroup { id = clip.NextGroupId(), name = name };
+                    clip.userGroups.Add(g);
+                    track.groupId = g.id;
+                    VMGTimelineSelection.MarkDirty(clip);
+                });
+            });
+        }
+
+        // Right-click on any group header — both user groups and auto
+        // subgroups. The available actions differ by row kind.
+        void ShowGroupHeaderContextMenu(VMGAnimationClip clip, Row row)
+        {
+            var menu = new GenericMenu();
+            if (row.kind == RowKind.UserGroup)
+            {
+                int gid = row.userGroupId;
+                menu.AddItem(new GUIContent("Rename group..."), false, () =>
+                {
+                    PromptAndRenameGroup(clip, gid);
+                });
+                menu.AddSeparator(string.Empty);
+                menu.AddItem(new GUIContent("Delete group (keep tracks)"), false, () =>
+                {
+                    DeleteUserGroup(clip, gid, deleteTracks: false);
+                });
+                menu.AddItem(new GUIContent("Delete group and tracks"), false, () =>
+                {
+                    DeleteUserGroup(clip, gid, deleteTracks: true);
+                });
+            }
+            else if (row.kind == RowKind.AutoGroup)
+            {
+                // Auto subgroups are derived; no rename. Offer to assign
+                // every member track to a user group at once.
+                menu.AddItem(new GUIContent("New group from these tracks..."), false, () =>
+                {
+                    PromptAndCreateGroup(clip, name =>
+                    {
+                        Undo.RecordObject(clip, "New Group From Auto Subgroup");
+                        var g = new VMGTrackGroup { id = clip.NextGroupId(), name = name };
+                        clip.userGroups.Add(g);
+                        for (int ti = 0; ti < clip.tracks.Count; ti++)
+                        {
+                            var t = clip.tracks[ti];
+                            if (t == null) continue;
+                            if (t.groupId != row.userGroupId) continue;
+                            if (BuildGroupKey(t.binding, row.userGroupId) != row.groupKey) continue;
+                            t.groupId = g.id;
+                        }
+                        VMGTimelineSelection.MarkDirty(clip);
+                    });
+                });
+            }
+
+            // Empty menu is a no-op, but adding a Cancel keeps the click
+            // from feeling broken when no actions exist.
+            menu.ShowAsContext();
+        }
+
+        void DeleteUserGroup(VMGAnimationClip clip, int gid, bool deleteTracks)
+        {
+            Undo.RecordObject(clip, deleteTracks ? "Delete Group and Tracks" : "Delete Group");
+            if (deleteTracks)
+            {
+                for (int i = clip.tracks.Count - 1; i >= 0; i--)
+                {
+                    if (clip.tracks[i] != null && clip.tracks[i].groupId == gid)
+                        clip.tracks.RemoveAt(i);
+                }
+            }
+            else
+            {
+                foreach (var t in clip.tracks)
+                {
+                    if (t != null && t.groupId == gid) t.groupId = 0;
+                }
+            }
+            if (clip.userGroups != null)
+            {
+                for (int i = clip.userGroups.Count - 1; i >= 0; i--)
+                {
+                    if (clip.userGroups[i] != null && clip.userGroups[i].id == gid)
+                        clip.userGroups.RemoveAt(i);
+                }
+            }
+            clip.RecalculateDuration();
+            m_Selection.Clear();
+            VMGTimelineSelection.MarkDirty(clip);
+        }
+
+        void PromptAndCreateGroup(VMGAnimationClip clip, Action<string> onConfirmed)
+        {
+            VMGNameInputPopup.Show("Create Group", "Group name:", "Group", name =>
+            {
+                if (string.IsNullOrWhiteSpace(name)) return;
+                onConfirmed(name.Trim());
+            });
+        }
+
+        void PromptAndRenameGroup(VMGAnimationClip clip, int gid)
+        {
+            VMGTrackGroup g = null;
+            foreach (var ug in clip.userGroups) { if (ug != null && ug.id == gid) { g = ug; break; } }
+            if (g == null) return;
+            string seed = g.name ?? string.Empty;
+            VMGNameInputPopup.Show("Rename Group", "Group name:", seed, name =>
+            {
+                if (string.IsNullOrWhiteSpace(name)) return;
+                Undo.RecordObject(clip, "Rename Group");
+                g.name = name.Trim();
+                VMGTimelineSelection.MarkDirty(clip);
+            });
         }
 
         static VMGAnimationKey FindNearestKey(VMGAnimationTrack track, float t)
@@ -1442,6 +2131,19 @@ namespace VMG.EditorTools.Animation
             var clip = animator.clip;
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
+            if (GUILayout.Button("+ Add Group", GUILayout.Width(120f)))
+            {
+                PromptAndCreateGroup(clip, name =>
+                {
+                    Undo.RecordObject(clip, "Add VMG Group");
+                    clip.userGroups.Add(new VMGTrackGroup
+                    {
+                        id = clip.NextGroupId(),
+                        name = name,
+                    });
+                    VMGTimelineSelection.MarkDirty(clip);
+                });
+            }
             if (GUILayout.Button("+ Add Track", GUILayout.Width(120f)))
             {
                 VMGChannelPickerWindow.Show(animator.transform, picked =>

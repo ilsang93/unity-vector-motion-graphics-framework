@@ -111,7 +111,15 @@ namespace VMG.EditorTools.Animation
             }
             m_Timeline.Playback = m_Playback;
             m_Playback.DrawControls();
-            m_Timeline.Draw(m_Animator);
+
+            // Hand the timeline the remaining window space so the track
+            // area can scroll vertically instead of overflowing the
+            // window when many tracks are present. Subtract the bottom
+            // Add Track/Group bar (one row of mini-buttons + margin).
+            float yCursor = GUILayoutUtility.GetLastRect().yMax;
+            float bottomBarReserve = 26f;
+            float bodyHeight = Mathf.Max(60f, position.height - yCursor - bottomBarReserve - 4f);
+            m_Timeline.Draw(m_Animator, bodyHeight);
         }
     }
 }

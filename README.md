@@ -6,7 +6,7 @@ Procedural vector motion graphics runtime for Unity. Built for AE-style shape-la
 expressiveness with first-class Unity Animator / Timeline integration on both UGUI
 and world-space renderers.
 
-## Features (0.26.0)
+## Features (0.32.0)
 
 - Path + Node data model with cubic Bezier (`inTangent` / `outTangent` per node), tessellated upstream of every modifier
 - Procedural CPU mesh generation
@@ -94,7 +94,9 @@ Unity Timeline. Three authoring surfaces, all driving the same engine:
 
 - **`VMGAnimationClip` + VMGAnimator** — ScriptableObject clip
   asset, edited in a dedicated timeline window. Per-track keys with
-  ease, multi-target, events, baseline restore.
+  ease, multi-target, events, baseline restore. Composition groups
+  bundle tracks across multiple GameObjects (e.g. "Hero entrance")
+  with right-click assignment and drag-reorder.
 - **Code API (anime.js-style fluent builders)** —
   `VMGFx.Animate(target).To(...).Duration(...).Ease(...).Play()`,
   `VMGFx.Timeline()` for sequencing with relative positions

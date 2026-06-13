@@ -24,6 +24,12 @@ namespace VMG.Animation
 
         public List<VMGAnimationEvent> events = new List<VMGAnimationEvent>();
 
+        // User-defined composition groups. Tracks reference these by id
+        // via VMGAnimationTrack.groupId. Empty groups are valid (user can
+        // create the group first, then assign tracks). Ids are managed
+        // via NextGroupId() so duplicate-name groups stay distinct.
+        public List<VMGTrackGroup> userGroups = new List<VMGTrackGroup>();
+
         public VMGHierarchySnapshot hierarchy = new VMGHierarchySnapshot();
 
         // Default duration for empty clips. Keeps the timeline view from
@@ -58,6 +64,22 @@ namespace VMG.Animation
                 }
             }
             duration = hasAny ? maxT : EmptyClipDuration;
+        }
+
+        // Allocate a fresh group id larger than any existing one. Starts
+        // at 1 (0 is reserved for "no group"). Importers / editor actions
+        // use this so re-imports never collide with existing groups.
+        public int NextGroupId()
+        {
+            int max = 0;
+            if (userGroups != null)
+            {
+                foreach (var g in userGroups)
+                {
+                    if (g != null && g.id > max) max = g.id;
+                }
+            }
+            return max + 1;
         }
     }
 }

@@ -128,6 +128,17 @@ namespace VMG.Core
             return s;
         }
 
+        /// World-renderer factory: 1m size instead of 100px. Used by
+        /// VectorSpriteRenderer so AddComponent / Reset / prefab-new all
+        /// land at a default that fits a standard camera's view.
+        public static PrimitiveShapeSource WorldDefault()
+        {
+            var s = new PrimitiveShapeSource();
+            s.Normalize();
+            s.size = new Vector2(1f, 1f);
+            return s;
+        }
+
         // Slot accessors. Hand-written switch instead of reflection so
         // the inner loop in BuildFree stays allocation-free and fast.
         public FlatNode GetSlot(int i)

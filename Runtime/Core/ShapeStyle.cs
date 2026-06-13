@@ -54,6 +54,19 @@ namespace VMG.Core
             join = LineJoin.Miter,
             miterLimit = 8f,
         };
+
+        /// World-renderer default: stroke width in meters (0.04) instead
+        /// of pixels (4). Otherwise identical to Default.
+        public static StrokeStyle WorldDefault => new StrokeStyle
+        {
+            enabled = true,
+            color = Color.white,
+            width = 0.04f,
+            alignment = StrokeAlignment.Center,
+            cap = LineCap.Butt,
+            join = LineJoin.Miter,
+            miterLimit = 8f,
+        };
     }
 
     [Serializable]

@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.31.0] - 2026-06-14
+
+VectorSpriteRenderer World-renderer defaults round. New world-space
+renderers (AddComponent, inspector Reset, prefab-new) now land at a
+1m / thin-stroke baseline that fits a standard camera's view, instead
+of inheriting the UGUI pixel-scale defaults (100px shape, 4px stroke
+that rendered as 100m / 4m in world space).
+
+### Changed
+
+- **`VectorSpriteRenderer` field initializers use new World defaults.**
+  `ShapeStack.WorldDefault()` seeds every slot's primitive at 1m
+  (still circles); `StrokeStyle.WorldDefault` uses 0.04 stroke width
+  instead of 4. UGUI `VectorImageGraphic` is untouched — pixel domain
+  keeps 100px defaults so 160×160 RectTransforms still read as
+  expected.
+- **`GameObject > 2D Object > Vector Sprite Renderer` menu** no longer
+  manually overrides slot sizes / stroke width — the renderer's own
+  defaults now match what the menu was hand-patching. Single source
+  of truth.
+
+### Why this matters
+
+The 0.11.0 fix patched only the menu factory entry point. Every other
+path — `Add Component`, prefab instantiation, code-driven
+`AddComponent<VectorSpriteRenderer>()`, inspector Reset — still
+inherited the pixel-friendly 100×100 default and rendered at 100m.
+This round closes those entry points by moving the World-vs-UI
+default split into the type-level field initializers, so all paths
+behave consistently.
+
+### Added
+
+- `PrimitiveShapeSource.WorldDefault()` — factory returning a 1m
+  primitive (Normalize + size override).
+- `ShapeStack.WorldDefault()` — analog of `Default()` using
+  `PrimitiveShapeSource.WorldDefault()` for every slot.
+- `StrokeStyle.WorldDefault` — `Default` with width 0.04 instead of 4.
+
 ## [0.28.0] - 2026-06-13
 
 Timeline editor UX polish round. Visual language aligned with

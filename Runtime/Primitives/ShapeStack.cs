@@ -81,6 +81,21 @@ namespace VMG.Core
             };
         }
 
+        /// World-renderer default: same shape, but each slot's primitive
+        /// uses WorldDefault (1m) instead of Default (100px).
+        public static ShapeStack WorldDefault()
+        {
+            return new ShapeStack
+            {
+                resampleCount = 64,
+                alignment = BlendAlignment.Auto,
+                Slot0 = new ShapeSlot { shape = PrimitiveShapeSource.WorldDefault(), intensity = 1f },
+                Slot1 = new ShapeSlot { shape = PrimitiveShapeSource.WorldDefault(), intensity = 0f },
+                Slot2 = new ShapeSlot { shape = PrimitiveShapeSource.WorldDefault(), intensity = 0f },
+                Slot3 = new ShapeSlot { shape = PrimitiveShapeSource.WorldDefault(), intensity = 0f },
+            };
+        }
+
         /// Magic-but-effective fixup for fields that deserialize as
         /// zero (struct field initializers aren't allowed). Mirrors the
         /// pattern used elsewhere in the package.

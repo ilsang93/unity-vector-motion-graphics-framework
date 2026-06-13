@@ -17,8 +17,8 @@ namespace VMG.World
         public VMGShapeAsset SvgAsset;
         [Tooltip("SVG units per world unit when rendering an SVG asset. Keyframable.")]
         public float SvgUnitsPerWorldUnit = 100f;
-        public ShapeStack ShapeStack = ShapeStack.Default();
-        public StrokeStyle Stroke = StrokeStyle.Default;
+        public ShapeStack ShapeStack = ShapeStack.WorldDefault();
+        public StrokeStyle Stroke = StrokeStyle.WorldDefault;
         public FillStyle Fill = new FillStyle { enabled = true, color = Color.white };
         public DepthStyle Depth = DepthStyle.Default;
         public RoundCornerModifier RoundCorners = RoundCornerModifier.Default();

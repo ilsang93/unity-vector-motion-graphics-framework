@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.36.0] - 2026-06-14
+
+Renderer dirty-flag — both `VectorImageGraphic` (UGUI) and
+`VectorSpriteRenderer` (World) used to rebuild the mesh every
+frame regardless of state changes. The per-frame
+`OnPopulateMesh` / `Rebuild` is now gated on a value-equality
+check against a snapshot from the last rebuild; idle frames pay
+only a handful of struct field compares instead of full
+triangulation + mesh upload.
+
+### Changed
+
+- **`VectorImageGraphic` LateUpdate gates `SetVerticesDirty`.**
+  Compares `ShapeStack` / `StrokeStyle` / `FillStyle` /
+  `RoundCornerModifier` / `TrimPathModifier` / `Graphic.color` /
+  `SvgAsset` ref / `Texture` ref against a snapshot captured at
+  the end of `OnPopulateMesh`. When nothing changed, the call
+  to `SetVerticesDirty` is skipped — UGUI's CanvasUpdateRegistry
+  never queues the rebuild and the OnPopulateMesh /
+  triangulation path is bypassed entirely. Animator-driven
+  channel writes are detected automatically because Unity's
+  channel writers mutate the [SerializeField] fields the
+  comparison reads. **The gate is bypassed when `FitToRect` is
+  on** — parent Canvas resizes, anchor changes, scaler updates
+  and layout-group fixups can shift `rectTransform.rect`
+  without an `OnRectTransformDimensionsChange` callback in the
+  same frame, so a value-equality compare would miss those
+  cases and the visual would drift out of fit. FitToRect mode
+  rebuilds every frame as in 0.36.0-pre; the dirty-flag savings
+  only apply to FitToRect=false (user-driven sizing).
+- **`VectorSpriteRenderer` Update gates `Rebuild`.** Same
+  comparison surface plus `DepthStyle` / `Tint` /
+  `SvgUnitsPerWorldUnit`. `EnsureRefs` still runs every frame so
+  material / texture / sorting edits stay live (those are
+  independent of mesh content).
+- **`SetMeshDirty()` public method** added to both renderers.
+  Call it after mutating an external resource the dirty-flag
+  cannot detect by value — typically a `SvgAsset`, a
+  `VMGShapeAsset`'s internal data, or a FreePath's legacy node
+  list. Plain field writes (animator channels, DOTween tweens,
+  direct `g.Fill.color = ...`, inspector edits) are covered
+  automatically and need no explicit call.
+- New `VMG.Core.VectorRendererEquality` static helper exposes
+  per-struct `Same(in T, in T)` comparisons for the package's
+  mesh-input structs (`ShapeStack`, `PrimitiveShapeSource`,
+  `ShapeSlot`, `StrokeStyle`, `FillStyle`, `DepthStyle`,
+  `RoundCornerModifier`, `TrimPathModifier`, `FlatNode`).
+  Hand-unrolled field comparison avoids the
+  reflection-based default `ValueType.Equals`. The FreePath
+  node compare stops at `activeNodeCount` and is skipped for
+  non-FreePath shapes — a typical primitive renderer pays for
+  ~10 field compares per frame, not 64 × 4 nodes.
+
+### Known limitation
+
+External-asset internal mutations (a `VMGShapeAsset`'s nodes,
+the legacy FreePath `freeNodesLegacy` list, an SVG asset's path
+data) are tracked by reference identity only. Call
+`SetMeshDirty()` after mutating one of those in place. Plain
+animator / inspector / DOTween writes need no such call.
+
 ## [0.35.0] - 2026-06-14
 
 DSL friction round 1 #2 — stagger blocks now accept multiple

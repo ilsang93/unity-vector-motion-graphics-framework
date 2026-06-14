@@ -44,9 +44,27 @@ namespace VMG.World
         private MaterialPropertyBlock m_PropertyBlock;
         private static readonly int s_MainTexID = Shader.PropertyToID("_MainTex");
 
+        // Dirty-flag snapshot. Update compares the current mesh inputs
+        // against this and only calls Rebuild when something changed —
+        // saves the triangulation + Mesh upload cost on idle frames.
+        // Snapshot is captured at the end of Rebuild so the steady-
+        // state frame compares equal. m_HasSnapshot stays false until
+        // the first Rebuild so the initial Update always rebuilds.
+        private ShapeStack m_PrevStack;
+        private StrokeStyle m_PrevStroke;
+        private FillStyle m_PrevFill;
+        private DepthStyle m_PrevDepth;
+        private RoundCornerModifier m_PrevRound;
+        private TrimPathModifier m_PrevTrim;
+        private Color m_PrevTint;
+        private float m_PrevSvgUnits;
+        private VMGShapeAsset m_PrevSvgAsset;
+        private bool m_HasSnapshot;
+
         private void OnEnable()
         {
             EnsureRefs();
+            m_HasSnapshot = false;
             Rebuild();
         }
 
@@ -65,16 +83,63 @@ namespace VMG.World
         {
             if (!isActiveAndEnabled) return;
             EnsureRefs();
+            m_HasSnapshot = false;
             Rebuild();
         }
 #endif
 
         private void Update()
         {
-            // Cheap rebuild every frame so Animator-driven values reflect.
-            // For static shapes a dirty flag would be more efficient; keep
-            // simple in MVP.
-            Rebuild();
+            // Material / texture / sorting refresh is independent of
+            // mesh content (a tint change doesn't need triangulation),
+            // so EnsureRefs keeps running every frame to honour
+            // inspector edits. Mesh Rebuild is gated by the dirty
+            // snapshot so animator-idle frames pay only the cheap
+            // field compare.
+            EnsureRefs();
+            if (IsMeshInputDirty()) Rebuild();
+        }
+
+        bool IsMeshInputDirty()
+        {
+            if (!m_HasSnapshot) return true;
+            if (!ReferenceEquals(m_PrevSvgAsset, SvgAsset)) return true;
+            if (m_PrevTint != Tint) return true;
+            if (m_PrevSvgUnits != SvgUnitsPerWorldUnit) return true;
+            // SvgAsset bypasses the procedural pipeline entirely.
+            if (SvgAsset != null) return false;
+            if (!VectorRendererEquality.Same(m_PrevStack, ShapeStack)) return true;
+            if (!VectorRendererEquality.Same(m_PrevStroke, Stroke)) return true;
+            if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
+            if (!VectorRendererEquality.Same(m_PrevDepth, Depth)) return true;
+            if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
+            if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
+            return false;
+        }
+
+        void CaptureSnapshot()
+        {
+            m_PrevStack = ShapeStack;
+            m_PrevStroke = Stroke;
+            m_PrevFill = Fill;
+            m_PrevDepth = Depth;
+            m_PrevRound = RoundCorners;
+            m_PrevTrim = Trim;
+            m_PrevTint = Tint;
+            m_PrevSvgUnits = SvgUnitsPerWorldUnit;
+            m_PrevSvgAsset = SvgAsset;
+            m_HasSnapshot = true;
+        }
+
+        /// Manually force a mesh rebuild on the next Update. Use this
+        /// after mutating an external resource the renderer references
+        /// but cannot detect by value — typically a SvgAsset or a
+        /// VMGShapeAsset's internal data. Plain field changes (Fill,
+        /// Stroke, ShapeStack, animator channels) are detected
+        /// automatically and do not need this call.
+        public void SetMeshDirty()
+        {
+            m_HasSnapshot = false;
         }
 
         private void EnsureRefs()
@@ -156,6 +221,7 @@ namespace VMG.World
                 BuildFromSvg();
                 NormalizeSvgUVs();
                 m_Combined.ApplyTo(m_Mesh);
+                CaptureSnapshot();
                 return;
             }
 
@@ -214,6 +280,7 @@ namespace VMG.World
 
             m_Combined.NormalizeUVsToVertexBounds();
             m_Combined.ApplyTo(m_Mesh);
+            CaptureSnapshot();
         }
 
         private void NormalizeSvgUVs()

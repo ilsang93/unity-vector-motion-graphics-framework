@@ -28,6 +28,23 @@ namespace VMG.UI
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
 
+        // Dirty-flag snapshot. LateUpdate compares the current mesh
+        // inputs against this and skips SetVerticesDirty when nothing
+        // changed. Captured AFTER each rebuild so the steady-state
+        // (animator-idle) frame compares equal and the rebuild is
+        // skipped. m_HasSnapshot stays false until the first rebuild
+        // so the very first LateUpdate always dirties.
+        private ShapeStack m_PrevStack;
+        private StrokeStyle m_PrevStroke;
+        private FillStyle m_PrevFill;
+        private RoundCornerModifier m_PrevRound;
+        private TrimPathModifier m_PrevTrim;
+        private Color m_PrevGraphicColor;
+        private bool m_PrevFitToRect;
+        private VMGShapeAsset m_PrevSvgAsset;
+        private Texture m_PrevTexture;
+        private bool m_HasSnapshot;
+
         public override Texture mainTexture => Texture != null ? Texture : base.mainTexture;
 
         // The package's SDF-AA shader makes vector edges antialias regardless
@@ -53,6 +70,7 @@ namespace VMG.UI
         {
             base.OnEnable();
             EnsureCanvasUv1Channel();
+            m_HasSnapshot = false; // force a rebuild on the first LateUpdate
             SetVerticesDirty();
         }
 
@@ -71,6 +89,7 @@ namespace VMG.UI
         protected override void OnValidate()
         {
             base.OnValidate();
+            m_HasSnapshot = false;
             SetVerticesDirty();
         }
 #endif
@@ -78,7 +97,11 @@ namespace VMG.UI
         protected override void OnRectTransformDimensionsChange()
         {
             base.OnRectTransformDimensionsChange();
-            if (FitToRect) SetVerticesDirty();
+            if (FitToRect)
+            {
+                m_HasSnapshot = false;
+                SetVerticesDirty();
+            }
         }
 
         protected override void OnCanvasHierarchyChanged()
@@ -87,12 +110,72 @@ namespace VMG.UI
             EnsureCanvasUv1Channel();
         }
 
-        /// Animator/Timeline-driven [SerializeField] writes don't go through
-        /// any setter, so the Graphic doesn't know to rebuild. Mark dirty
-        /// every late frame; cost is bounded by OnPopulateMesh skipping a
-        /// regen if nothing actually changed downstream.
+        /// Animator/Timeline-driven [SerializeField] writes don't go
+        /// through any setter, so we poll every LateUpdate. The gate
+        /// compares the current mesh inputs against a snapshot from the
+        /// last rebuild and only calls SetVerticesDirty when something
+        /// actually changed — saves the OnPopulateMesh / triangulation
+        /// cost on idle frames. Snapshot is captured at the end of
+        /// OnPopulateMesh so animator-driven channel writes are
+        /// detected on the next frame.
         private void LateUpdate()
         {
+            if (IsMeshInputDirty()) SetVerticesDirty();
+        }
+
+        bool IsMeshInputDirty()
+        {
+            if (!m_HasSnapshot) return true;
+            // FitToRect overwrites ShapeStack slots from rectTransform.rect
+            // on every OnPopulateMesh. Parent Canvas resizes, anchor
+            // changes, scaler updates and layout-group fixups can shift
+            // the rect (size, position, or both) without an
+            // OnRectTransformDimensionsChange callback in the same frame,
+            // so a value-equality gate misses those cases. Skip the gate
+            // entirely when FitToRect is on — the rebuild cost is no
+            // worse than 0.36.0-pre and the visual stays correct.
+            // FitToRect=false (user-driven sizing) keeps the gate.
+            if (FitToRect) return true;
+            if (!ReferenceEquals(m_PrevSvgAsset, SvgAsset)) return true;
+            if (!ReferenceEquals(m_PrevTexture, Texture)) return true;
+            if (m_PrevGraphicColor != color) return true;
+            if (m_PrevFitToRect != FitToRect) return true;
+            // When an SvgAsset is assigned the procedural pipeline is
+            // bypassed entirely, so the shape / modifier / fill / stroke
+            // fields don't influence the mesh. Skip their comparison.
+            if (SvgAsset != null) return false;
+            if (!VectorRendererEquality.Same(m_PrevStack, ShapeStack)) return true;
+            if (!VectorRendererEquality.Same(m_PrevStroke, Stroke)) return true;
+            if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
+            if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
+            if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
+            return false;
+        }
+
+        void CaptureSnapshot()
+        {
+            m_PrevStack = ShapeStack;
+            m_PrevStroke = Stroke;
+            m_PrevFill = Fill;
+            m_PrevRound = RoundCorners;
+            m_PrevTrim = Trim;
+            m_PrevGraphicColor = color;
+            m_PrevFitToRect = FitToRect;
+            m_PrevSvgAsset = SvgAsset;
+            m_PrevTexture = Texture;
+            m_HasSnapshot = true;
+        }
+
+        /// Manually force a mesh rebuild on the next LateUpdate. Use
+        /// this after mutating an external resource the renderer
+        /// references but cannot detect by value — typically a
+        /// SvgAsset, a VMGShapeAsset's internal data, or a FreePath's
+        /// legacy node list. Plain field changes (Fill.color,
+        /// Stroke.width, ShapeStack slots, animator channels) are
+        /// detected automatically and do not need this call.
+        public void SetMeshDirty()
+        {
+            m_HasSnapshot = false;
             SetVerticesDirty();
         }
 
@@ -103,6 +186,7 @@ namespace VMG.UI
             if (SvgAsset != null)
             {
                 PopulateFromSvg(vh);
+                CaptureSnapshot();
                 return;
             }
 
@@ -158,6 +242,11 @@ namespace VMG.UI
             // Push fill mesh, then stroke mesh, into VertexHelper.
             AppendBufferToVH(m_Pipeline.mesh, vh);
             AppendBufferToVH(m_StrokeBuf, vh);
+
+            // Capture AFTER FitToRect has overwritten slot center/size,
+            // so the next LateUpdate sees a stable ShapeStack across
+            // frames where the RectTransform didn't change.
+            CaptureSnapshot();
         }
 
         private static Rect VertexUnionBounds(MeshBuffer a, MeshBuffer b)

@@ -136,9 +136,12 @@ namespace VMG.World
         /// but cannot detect by value — typically a SvgAsset or a
         /// VMGShapeAsset's internal data. Plain field changes (Fill,
         /// Stroke, ShapeStack, animator channels) are detected
-        /// automatically and do not need this call.
+        /// automatically and do not need this call. Also drops the
+        /// SvgAsset's tessellation cache so other renderers sharing the
+        /// same asset re-tessellate too.
         public void SetMeshDirty()
         {
+            if (SvgAsset != null) SvgAsset.ClearTessellationCache();
             m_HasSnapshot = false;
         }
 
@@ -309,7 +312,13 @@ namespace VMG.World
                 var sub = asset.subShapes[s];
                 if (sub == null || sub.nodes.Count < 2) continue;
 
-                BezierTessellator.Tessellate(sub.nodes, sub.closed, bezSamples, m_SvgPath);
+                // Reuse the asset's cached bezier-tessellated polyline; copy
+                // it onto our path before applying the world transform so
+                // the shared cache stays untouched. The cache survives
+                // until the SvgAsset is mutated (SetMeshDirty clears it).
+                var tessellated = asset.GetTessellation(s, bezSamples);
+                if (tessellated == null) continue;
+                m_SvgPath.CopyFrom(tessellated);
                 for (int i = 0; i < m_SvgPath.nodes.Count; i++)
                 {
                     var n = m_SvgPath.nodes[i];

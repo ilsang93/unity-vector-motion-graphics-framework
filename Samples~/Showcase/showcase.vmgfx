@@ -1,0 +1,131 @@
+// showcase.vmgfx — advanced VMGAnimator script.
+// The "what's possible" counterpart to AnimatorSample. Exercises the
+// full DSL surface: add / group, stagger with multiple child statements
+// in lockstep, motionPath approximated via keyframes (kept as a
+// keyframes-can-do-anything demo — motionPath on RectTransform works
+// since 0.34.0), spring + cubicBezier eases, timeline labels and
+// relative positions, multi-channel keyframes, and event hooks.
+//
+// Drop on a UI Canvas GameObject with VMGAnimator (Mode = Internal,
+// Script = this asset). VMGAnimator builds the scene itself.
+
+// ---- Stage backdrop ----
+add stage roundedRect size=600,600 cornerRadius=24 fill=#10141c stroke=#2a3142,2
+
+// ---- Orbit guide (a thin ring the satellite will follow) ----
+add ring circle size=320 fill=none stroke=#3a4660,2
+
+// ---- A pulsing hero at center (triangle so its spin is visible) ----
+add hero polygon sides=3 size=140 fill=#ff5ea8 stroke=#ffffff,3
+
+// ---- Eight particles arranged in a ring (positioned by hand) ----
+group orbiters {
+  add p0 circle size=28 fill=#5ee0ff position=160,0
+  add p1 circle size=28 fill=#5ee0ff position=113,113
+  add p2 circle size=28 fill=#5ee0ff position=0,160
+  add p3 circle size=28 fill=#5ee0ff position=-113,113
+  add p4 circle size=28 fill=#5ee0ff position=-160,0
+  add p5 circle size=28 fill=#5ee0ff position=-113,-113
+  add p6 circle size=28 fill=#5ee0ff position=0,-160
+  add p7 circle size=28 fill=#5ee0ff position=113,-113
+}
+
+// ---- Four corner accent bars ----
+group bars {
+  add bar0 rect size=80,8 fill=#ffd166 position=-240,240
+  add bar1 rect size=80,8 fill=#ffd166 position=240,240
+  add bar2 rect size=80,8 fill=#ffd166 position=-240,-240
+  add bar3 rect size=80,8 fill=#ffd166 position=240,-240
+}
+
+// ---- A satellite that flies along the orbit ring ----
+add satellite polygon sides=3 size=36 fill=#a0ffd6 stroke=#10141c,2 position=160,0
+
+// =====================================================================
+// MAIN TIMELINE — 6 seconds, loops forever, alternates direction
+// =====================================================================
+timeline duration=6 loop alternate {
+
+  // --- Intro: stage pops in ---
+  animate stage localScale -> 1,1 from=0,0 duration=0.6 ease=outQuad at=0
+  animate stage RoundCorners.radius -> 60 from=24 duration=0.6 ease=outQuad at=0
+
+  // --- Ring fades in by drawing itself (Trim) ---
+  animate ring Trim.end -> 1 from=0 duration=0.8 ease=outCubic at=0.2
+
+  // --- Corner bars sweep in from center, staggered from edges ---
+  label barsIn at=0.4
+  stagger bars/* step=0.08 from=first {
+    animate it localScale -> 1,1 from=0,0 duration=0.5 ease=outQuad
+  }
+
+  // --- Hero star: spring scale + spinning + color keyframes ---
+  label heroIn at=0.8
+  animate hero localScale -> 1,1 from=0,0 duration=1.2 ease=spring(180,12,1,0) at=heroIn
+  // 0→359 in 4 quarter-turn keyframes (avoids Unity's eulerAngles wrap).
+  // No `loop` here — keyframes inside a timeline can't loop on their own;
+  // the outer timeline's loop alternate replays the whole thing.
+  keyframes hero.transform duration=3 ease=linear at=heroIn {
+    0%:   localEulerAngles.z=0
+    25%:  localEulerAngles.z=90
+    50%:  localEulerAngles.z=180
+    75%:  localEulerAngles.z=270
+    100%: localEulerAngles.z=359
+  }
+
+  keyframes hero duration=3 ease=easeInOut at=heroIn {
+    0%:   Fill.color=#ff5ea8 Stroke.width=3
+    25%:  Fill.color=#ffd166 Stroke.width=8
+    50%:  Fill.color=#5ee0ff Stroke.width=3
+    75%:  Fill.color=#a0ffd6 Stroke.width=8
+    100%: Fill.color=#ff5ea8 Stroke.width=3
+  }
+
+  // --- Orbiters: pop in + randomize colour + tint stroke, all in lockstep ---
+  // Multiple animate/motionPath/keyframes statements share one stagger header,
+  // so per-child timing stays in lockstep across channels (0.35.0+).
+  label orbitIn at=1.2
+  stagger orbiters/* step=0.06 from=center seed=11 at=orbitIn {
+    animate it localScale -> 1.6,1.6 from=0,0 duration=0.5 ease=outQuad
+    animate it Fill.color -> random(#5ee0ff,#ff5ea8,#ffd166,#a0ffd6) duration=0.5 at=<<
+    animate it Stroke.color -> #ffffff from=#000000 duration=0.5 at=<<
+  }
+
+  // Rhythmic pulse — orbiters are circles, so a spin would be invisible.
+  // We keep the pulse and skip self-rotation here.
+  stagger orbiters/* step=0.05 from=first seed=11 at=2.2 {
+    animate it localScale -> 0.6,0.6 duration=0.4 ease=cubicBezier(0.25,0.1,0.25,1) loop=4 alternate
+  }
+
+  // --- Satellite traces a circular orbit via keyframed localPosition ---
+  // motionPath on RectTransform was fixed in 0.34.0 and would work here,
+  // but we keep the 8-stop keyframe loop as a "keyframes can do anything"
+  // demo — useful when you want explicit per-stop timing or to tweak a
+  // single waypoint without re-authoring a points list.
+  label satOut at=1.0
+  keyframes satellite duration=4.5 ease=linear at=satOut {
+    0%:   localPosition=160,0
+    12.5%: localPosition=113,113
+    25%:  localPosition=0,160
+    37.5%: localPosition=-113,113
+    50%:  localPosition=-160,0
+    62.5%: localPosition=-113,-113
+    75%:  localPosition=0,-160
+    87.5%: localPosition=113,-113
+    100%: localPosition=160,0
+  }
+  keyframes satellite.transform duration=4.5 ease=linear at=satOut {
+    0%:   localEulerAngles.z=0
+    25%:  localEulerAngles.z=90
+    50%:  localEulerAngles.z=180
+    75%:  localEulerAngles.z=270
+    100%: localEulerAngles.z=359
+  }
+
+  // --- Final beat: stage breathes ---
+  animate stage Stroke.width -> 6 from=2 duration=0.6 ease=outQuad at=5.4
+  animate stage Fill.color -> #1a2030 duration=0.6 at=5.4
+
+  // --- Event hook for inspection ---
+  call showcaseLoopDone at=6
+}

@@ -1023,7 +1023,7 @@ namespace VMG.Animation.Core
                     return null;
                 }
                 string groupName = spec.Substring(0, spec.Length - 2);
-                Transform groupTr = string.IsNullOrEmpty(groupName) || groupName == "/" || groupName == "root"
+                Transform groupTr = string.IsNullOrEmpty(groupName) || groupName == "/" || groupName == "root" || groupName == "self"
                     ? root
                     : root.Find(groupName);
                 if (groupTr == null)
@@ -1899,7 +1899,7 @@ namespace VMG.Animation.Core
                 bool wantsTransform = targetSpec.EndsWith(".transform");
                 string name = wantsTransform ? targetSpec.Substring(0, targetSpec.Length - ".transform".Length) : targetSpec;
 
-                if (name == "/" || name == "" || name == "root")
+                if (name == "/" || name == "" || name == "root" || name == "self")
                 {
                     if (wantsTransform) return root;
                     return PickByPath(root, root, path);

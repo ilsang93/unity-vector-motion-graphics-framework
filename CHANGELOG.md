@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.38.0] - 2026-06-15
+
+SVG render-path perf — natural follow-up to 0.36.0's renderer
+dirty-flag. When a dirty rebuild does fire and the underlying
+`VMGShapeAsset` is unchanged, the bezier-tessellated polyline is now
+served from a cache on the asset itself instead of being re-built
+from scratch. Visual output is bit-identical to 0.37.x.
+
+### Added
+
+- **`VMGShapeAsset.GetTessellation(subShapeIndex, bezSamples)`** —
+  returns the cached bezier-tessellated polyline for one sub-shape
+  at the given per-segment sample budget. Lazy-built on first call,
+  shared across every `VectorImageGraphic` / `VectorSpriteRenderer`
+  that references the asset. Caller must not mutate the returned
+  `VectorPath` — `CopyFrom` it onto a renderer-owned path before
+  applying transforms.
+- **`VMGShapeAsset.ClearTessellationCache()`** — drops every cached
+  polyline. Call after mutating `subShapes` in code so the next
+  rebuild re-tessellates.
+
+### Changed
+
+- **`VectorImageGraphic.PopulateFromSvg` and
+  `VectorSpriteRenderer.BuildFromSvg`** now go through
+  `SvgAsset.GetTessellation(...)` instead of calling
+  `BezierTessellator.Tessellate(...)` per rebuild. The cached path
+  is copied onto the renderer's own `m_SvgPath` before the
+  origin/scale transform is applied, so the cache stays untouched
+  and re-usable across renderers and rebuilds.
+- **`VectorImageGraphic.SetMeshDirty()` and
+  `VectorSpriteRenderer.SetMeshDirty()`** now also call
+  `SvgAsset.ClearTessellationCache()`, so any renderer sharing the
+  asset re-tessellates on its next rebuild. This is the right
+  behaviour because `SetMeshDirty` is documented as the hook for
+  "mutated a VMGShapeAsset's internal data" — every viewer of that
+  data needs to know.
+
+### Notes
+
+- The cache is `[NonSerialized]` — it goes away on domain reload
+  and is never written to disk. SVG re-import via `SvgScripted
+  Importer` also starts fresh because the importer creates a new
+  `VMGShapeAsset` instance.
+- Up to 4 distinct `bezSamples` values are cached in parallel via a
+  small linear-probe array. In practice every renderer uses 16 (or
+  the per-stack override), so only one slot is ever populated;
+  the array exists so mixed-density scenes don't thrash.
+
+## [0.37.1] - 2026-06-14
+
+Patch follow-up to 0.37.0: `self` target alias the default new-script
+template was already using, plus an advanced sample to balance out
+AnimatorSample's two minimal scripts. No API changes.
+
+### Fixed
+
+- **`self` is accepted as a target / group alias in VMGFx scripts.**
+  `VMGAnimatorEditor` seeds the default new-script template with
+  `animate self localPosition.y -> 1`, but `VMGFxScript.ResolveTarget`
+  only recognised `/`, the empty string, and `root` as the self-target.
+  First-time users hit Play on the default template and silently saw
+  nothing. Now `self` joins `root` / `/` / `""` everywhere, in both
+  the standard target resolver and the `stagger group/*` group
+  resolver. `pulse.vmgfx` reverts to `keyframes self`; AnimatorSample
+  README lists `self` first with the others as aliases.
+
+### Added
+
+- **Showcase sample.** `Samples~/Showcase/showcase.vmgfx` is the
+  advanced counterpart to AnimatorSample — a single 6-second looping
+  composition that exercises the full DSL surface in one playable
+  scene: `add` / `group`, `timeline` with labels and relative
+  positions, `stagger` from `first` / `center` with multiple child
+  statements in lockstep (`at=<<`), `spring` and `cubicBezier` eases,
+  multi-stop `keyframes` on hero colour + satellite orbit, `random()`
+  values, `Trim` and `RoundCorners` channels, and a `call` event
+  hook. Registered as the "Showcase" package sample.
+
 ## [0.37.0] - 2026-06-14
 
 Small Timeline-editor quality-of-life fix plus two sample

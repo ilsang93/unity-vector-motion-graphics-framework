@@ -22,7 +22,7 @@ For looping playback (good for the breathing pulse), enable
 
 ### `pulse.vmgfx`
 Minimal: one `keyframes` block ping-pongs `localScale` + `Fill.color`
-on the animator's own GameObject (target `root`). No children are
+on the animator's own GameObject (target `self`). No children are
 spawned. Drop on any vector renderer to see it breathe.
 
 ### `intro-card.vmgfx`
@@ -69,7 +69,8 @@ timeline duration=2 loop {
 
 Targets:
 
-- `root` (alias `/` or empty) — the GameObject the VMGAnimator lives on.
+- `self` (aliases `root`, `/`, or empty) — the GameObject the
+  VMGAnimator lives on.
 - A bare name — looked up via `add`'s named children, then any
   child Transform under the animator's root (supports `group/child`
   paths).

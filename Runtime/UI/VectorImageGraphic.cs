@@ -173,8 +173,11 @@ namespace VMG.UI
         /// legacy node list. Plain field changes (Fill.color,
         /// Stroke.width, ShapeStack slots, animator channels) are
         /// detected automatically and do not need this call.
+        /// Also drops the SvgAsset's tessellation cache so other
+        /// renderers sharing the same asset re-tessellate too.
         public void SetMeshDirty()
         {
+            if (SvgAsset != null) SvgAsset.ClearTessellationCache();
             m_HasSnapshot = false;
             SetVerticesDirty();
         }
@@ -288,16 +291,20 @@ namespace VMG.UI
             m_StrokeBuf.Clear();
             m_Pipeline.mesh.Clear();
 
+            int bezSamples = Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
+                                       ? ShapeStack.Slot0.shape.bezierSamplesPerSegment : 16);
             for (int s = 0; s < asset.subShapes.Count; s++)
             {
                 var sub = asset.subShapes[s];
                 if (sub == null || sub.nodes.Count < 2) continue;
 
-                // Bezier-tessellate + apply uniform fit transform.
-                BezierTessellator.Tessellate(sub.nodes, sub.closed,
-                    Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
-                                 ? ShapeStack.Slot0.shape.bezierSamplesPerSegment : 16),
-                    m_SvgPath);
+                // Reuse the asset's cached bezier-tessellated polyline; copy
+                // it onto our path before applying the fit transform so the
+                // shared cache stays untouched. The cache survives until the
+                // SvgAsset is mutated (SetMeshDirty clears it).
+                var tessellated = asset.GetTessellation(s, bezSamples);
+                if (tessellated == null) continue;
+                m_SvgPath.CopyFrom(tessellated);
                 for (int i = 0; i < m_SvgPath.nodes.Count; i++)
                 {
                     var n = m_SvgPath.nodes[i];

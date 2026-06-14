@@ -322,7 +322,7 @@ namespace VMG.Animation.Core
         // CurrentTime so iterationTime stays continuous across the flip;
         // we also reset the prev-iterationTime tracker so the next
         // OnAfterRender sweep doesn't misfire 0-duration child callbacks.
-        public VMGTimeline Reverse()
+        public new VMGTimeline Reverse()
         {
             EnsureFinalized();
             base.Reverse();
@@ -451,6 +451,51 @@ namespace VMG.Animation.Core
             return this;
         }
 
+        // Mini-timeline overload: the build lambda hands back a fully-
+        // populated VMGTimeline per child instead of a single VMGAnimate.
+        // Lets a stagger body contain multiple animate / motionPath /
+        // keyframes statements that all share the same per-child offset,
+        // staying in lockstep within each child. Defaults are propagated
+        // by the caller (it copies our defaults into the mini before
+        // adding builders), so the children inside the mini pick them
+        // up via the mini's own ApplyDefaultsToBuilder.
+        public VMGTimeline Stagger<T>(System.Collections.Generic.IList<T> targets,
+            Func<T, int, int, VMGTimeline> build,
+            float step,
+            VMGStaggerFrom from = VMGStaggerFrom.First,
+            VMGAt at = default,
+            int? seed = null) where T : Component
+        {
+            if (targets == null || targets.Count == 0 || build == null) return this;
+
+            float anchor = ResolvePosition(at);
+
+            int n = targets.Count;
+            var calc = VMGStaggerCalculator.Build(n, from, seed);
+
+            for (int i = 0; i < n; i++)
+            {
+                var mini = build(targets[i], i, n);
+                if (mini == null || mini == this) continue;
+                float childOffset = anchor + calc.values[i] * step;
+                mini.ClaimByParent();
+                AddChildTimer(mini, VMGAt.Time(childOffset), mini.iterationDuration);
+            }
+            return this;
+        }
+
+        // Copy this timeline's authoring defaults (Duration / Delay /
+        // Ease) onto `dest`. Used by stagger's mini-timeline path so each
+        // per-child mini-timeline inherits the parent timeline's defaults
+        // before its builders are added.
+        internal void CopyDefaultsTo(VMGTimeline dest)
+        {
+            if (dest == null || dest == this) return;
+            if (m_DefaultDuration > 0f) dest.m_DefaultDuration = m_DefaultDuration;
+            if (m_DefaultDelay > 0f) dest.m_DefaultDelay = m_DefaultDelay;
+            if (m_HasDefaultEase) { dest.m_DefaultEase = m_DefaultEase; dest.m_HasDefaultEase = true; }
+        }
+
         // ------- Set (instant value) -------
 
         public VMGTimeline Set(Component target, string path, float value, VMGAt at = default)
@@ -570,12 +615,20 @@ namespace VMG.Animation.Core
         static bool AllTweensTargetSame(VMGAnimation anim, Component target)
         {
             if (anim.tweens.Count == 0) return false;
+            var targetGo = target != null ? target.gameObject : null;
             foreach (var t in anim.tweens)
             {
                 if (t is VMGCodeTween c)
                 {
                     if (c.writer == null) return false;
-                    if (c.writer.TargetEquals(target) == false) return false;
+                    if (c.writer.TargetEquals(target)) continue;
+                    // motionPath binds the writer to the Transform (or
+                    // RectTransform), not the renderer the caller passed in.
+                    // Treat any Component on the same GameObject as a match
+                    // so Remove(renderer) still finds it.
+                    var wtObj = c.writer.TargetObject as Component;
+                    if (wtObj != null && targetGo != null && wtObj.gameObject == targetGo) continue;
+                    return false;
                 }
                 else return false; // clip-driven: not introspectable here
             }

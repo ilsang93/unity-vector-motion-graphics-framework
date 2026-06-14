@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.35.0] - 2026-06-14
+
+DSL friction round 1 #2 — stagger blocks now accept multiple
+statements (and `keyframes`). Authoring a multi-channel stagger
+no longer requires duplicating headers across two or three
+identical `stagger` blocks.
+
+### Changed
+
+- **Stagger bodies can contain multiple animate / motionPath /
+  keyframes statements.** Each statement runs in lockstep within
+  a child — they share the same per-child offset computed from
+  `step` / `from` / `seed`. Previously only the *last* statement
+  was staggered (with a warning) and `keyframes` was rejected
+  outright. Implemented as a per-child mini-timeline behind a new
+  `VMGTimeline.Stagger<T>(targets, Func<T,int,int,VMGTimeline>,
+  ...)` overload; each statement sequences inside that mini by
+  appearance order, or use `at=<<` to start a statement together
+  with the previous one for lockstep channels. The `i` / `n`
+  token substitution that worked inside `animate` and
+  `motionPath` now works inside `keyframes` too (block attrs,
+  frame channel values, per-frame ease overrides). One-statement
+  stagger bodies behave identically to before. Closes DSL
+  friction item #2.
+
+## [0.34.0] - 2026-06-14
+
+DSL friction round 1 — three paper cuts surfaced authoring the
+ShowcaseDemo against the UI Canvas. Rotation targets now route to
+the Transform without an explicit `.transform` workaround,
+`motionPath` works on UI elements, and `keyframes loop=<n>` inside
+a `timeline { ... }` actually expands.
+
+### Changed
+
+- **Transform-reserved paths route to the Transform automatically.**
+  `localPosition`, `localScale`, `localRotation`, and
+  `localEulerAngles` (with any trailing `.x` / `.y` / `.z` / `.w`)
+  resolve on the Transform — or RectTransform on a UI element — even
+  when the target name was the renderer. Authors no longer need to
+  spell `name.transform` for rotation. Mirrors the existing fallback
+  for paths that don't compile on the renderer; this just makes the
+  routing deterministic for the local* family instead of relying on
+  member-resolution heuristics. Stagger's `it` target uses the same
+  rule.
+- **`motionPath` writes the right channel for the target type.**
+  Was always world `transform.position`; now `anchoredPosition` on
+  RectTransform (UI / Canvas), `localPosition` on a plain Transform,
+  or the GameObject's appropriate transform field on a Component.
+  `AutoRotate` similarly switches from world `eulerAngles.z` to
+  `localEulerAngles.z`. The path is now interpreted as offsets in
+  the parent's local space — anime.js parity, and the only
+  interpretation that makes sense under a moved Canvas or parented
+  hierarchy. `VMGTimeline.Remove(component)` still finds these
+  tweens even though the writer is bound to the Transform.
+
+### Fixed
+
+- **`keyframes loop=<n>` inside a `timeline { ... }` now expands
+  inline** instead of being silently re-routed onto the parent
+  timeline. The block produces N back-to-back copies of all
+  segments anchored within the block's slot; `alternate` reverses
+  every odd cycle. Bare `loop` (infinite) inside a timeline is now
+  a hard-error — the repetition span would be undefined when the
+  parent doesn't loop.
+
 ## [0.33.0] - 2026-06-14
 
 SVG importer round + Billboard component. The SVG parser learns

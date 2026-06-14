@@ -153,11 +153,12 @@ namespace VMG.Animation.Core
 
         // ------- MotionPath API -------
 
-        // Follow an arc-length parametrized curve. The target's
-        // transform.position is driven along the path; with .AutoRotate(),
-        // transform.eulerAngles.z is also written to face along the tangent.
-        // anime.js parity: createMotionPath. Calling twice replaces the
-        // pending motion path (the last call wins).
+        // Follow an arc-length parametrized curve. The path is in the
+        // target's parent local space — anchoredPosition for RectTransform
+        // (UI / Canvas), localPosition for everything else. With
+        // .AutoRotate() the target's localEulerAngles.z is also written to
+        // face along the tangent. anime.js parity: createMotionPath. Calling
+        // twice replaces the pending motion path (the last call wins).
         public VMGAnimate AlongPath(VMGShapeAsset asset, int subShapeIndex = 0)
         {
             if (m_Finalized) { Debug.LogError("[VMG.Animation] cannot add .AlongPath after the animation is finalized"); return this; }
@@ -653,26 +654,43 @@ namespace VMG.Animation.Core
             m_Anim.paused = false; // auto-play
         }
 
-        // Build a single VMGMotionPathTween bound to transform.position
-        // (and optionally transform.eulerAngles.z for AutoRotate). The path
-        // is sampled in 2D and projected to XY, preserving the current Z.
+        // Build a single VMGMotionPathTween bound to the right transform
+        // channel for this target. The path is sampled in 2D and projected
+        // to whatever the channel expects (Vector2 for RectTransform's
+        // anchoredPosition, Vector3 for everything else).
+        //
+        // Routing:
+        //   - RectTransform target  → anchoredPosition (UI / Canvas)
+        //   - Transform target      → localPosition (3D / World)
+        //   - Component on a UI GO  → its RectTransform's anchoredPosition
+        //   - Component on a 3D GO  → its Transform's localPosition
+        //
+        // Local (not world) for parity with anime.js, where path coords are
+        // offsets within the element's parent. Was world `transform.position`
+        // before — works for an at-origin parent but breaks under any moved
+        // Canvas or parented hierarchy.
         VMGMotionPathTween BuildMotionPathTween(VMGMotionPath motion, VMGEase ease, float duration)
         {
-            const string positionPath = "transform.position";
-            var rootType = m_Target.GetType();
-            if (!VMGFieldPathCompiler.TryCompile(rootType, positionPath, out var posCompiled, out var error))
+            ResolveMotionPathChannel(out var bindTarget, out var positionPath, out var rotationPath);
+            if (bindTarget == null)
             {
-                Debug.LogError($"[VMG.Animation] .AlongPath: cannot bind '{positionPath}' on {rootType.Name}: {error}");
+                Debug.LogError("[VMG.Animation] .AlongPath: cannot resolve a Transform on the target");
+                return null;
+            }
+            var bindType = bindTarget.GetType();
+            if (!VMGFieldPathCompiler.TryCompile(bindType, positionPath, out var posCompiled, out var error))
+            {
+                Debug.LogError($"[VMG.Animation] .AlongPath: cannot bind '{positionPath}' on {bindType.Name}: {error}");
                 return null;
             }
             var posType = posCompiled.leafType == typeof(Vector2) ? VMGChannelType.Vector2 : VMGChannelType.Vector3;
-            var posWriter = new VMGChannelWriter(m_Target, posCompiled, posType, positionPath);
+            var posWriter = new VMGChannelWriter(bindTarget, posCompiled, posType, positionPath);
             if (!posWriter.IsTypeCompatible(out var posErr))
             {
                 Debug.LogError($"[VMG.Animation] .AlongPath: {posErr}");
                 return null;
             }
-            var posReader = new VMGChannelReader(m_Target, posCompiled, posType);
+            var posReader = new VMGChannelReader(bindTarget, posCompiled, posType);
 
             var tween = new VMGMotionPathTween
             {
@@ -687,24 +705,54 @@ namespace VMG.Animation.Core
 
             if (m_AutoRotate)
             {
-                const string rotPath = "transform.eulerAngles.z";
-                if (!VMGFieldPathCompiler.TryCompile(rootType, rotPath, out var rotCompiled, out var rotError))
+                if (!VMGFieldPathCompiler.TryCompile(bindType, rotationPath, out var rotCompiled, out var rotError))
                 {
-                    Debug.LogWarning($"[VMG.Animation] .AutoRotate: cannot bind '{rotPath}': {rotError}. Position will still animate.");
+                    Debug.LogWarning($"[VMG.Animation] .AutoRotate: cannot bind '{rotationPath}' on {bindType.Name}: {rotError}. Position will still animate.");
                 }
                 else
                 {
-                    var rotWriter = new VMGChannelWriter(m_Target, rotCompiled, VMGChannelType.Float, rotPath);
+                    var rotWriter = new VMGChannelWriter(bindTarget, rotCompiled, VMGChannelType.Float, rotationPath);
                     if (rotWriter.IsTypeCompatible(out _))
                     {
                         tween.rotationWriter = rotWriter;
-                        tween.rotationReader = new VMGChannelReader(m_Target, rotCompiled, VMGChannelType.Float);
+                        tween.rotationReader = new VMGChannelReader(bindTarget, rotCompiled, VMGChannelType.Float);
                         tween.rotationOffsetDeg = m_AutoRotateOffsetDeg;
                     }
                 }
             }
 
             return tween;
+        }
+
+        void ResolveMotionPathChannel(out Component bindTarget, out string positionPath, out string rotationPath)
+        {
+            // If the target is itself a Transform, bind direct.
+            if (m_Target is RectTransform rt)
+            {
+                bindTarget = rt;
+                positionPath = "anchoredPosition";
+                rotationPath = "localEulerAngles.z";
+                return;
+            }
+            if (m_Target is Transform tr)
+            {
+                bindTarget = tr;
+                positionPath = "localPosition";
+                rotationPath = "localEulerAngles.z";
+                return;
+            }
+            // Otherwise it's a Component — resolve its GameObject's transform.
+            var gotTr = m_Target.transform;
+            if (gotTr is RectTransform gotRt)
+            {
+                bindTarget = gotRt;
+                positionPath = "anchoredPosition";
+                rotationPath = "localEulerAngles.z";
+                return;
+            }
+            bindTarget = gotTr;
+            positionPath = "localPosition";
+            rotationPath = "localEulerAngles.z";
         }
     }
 }

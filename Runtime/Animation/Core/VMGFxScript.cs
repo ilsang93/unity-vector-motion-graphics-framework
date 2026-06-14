@@ -865,9 +865,11 @@ namespace VMG.Animation.Core
                 ExpandStaggerIntoTimeline(tl, stg, scene, root, compiled);
             }
 
-            // Resolve the wildcard target, run the body once per child with
-            // it/i/n substituted, and hand the resulting builders to
-            // tl.Stagger via its (target, index, count) lambda overload.
+            // Resolve the wildcard target, build a fresh mini-timeline per
+            // child with each statement (animate / motionPath / keyframes)
+            // added in order with `it`/`i`/`n` substituted. The parent
+            // timeline anchors each mini-timeline at the same per-child
+            // offset so every statement inside a child stays in lockstep.
             //
             // Substitution happens on freshly-cloned per-child copies of the
             // AST so the original StaggerStmt remains untouched for any
@@ -884,8 +886,8 @@ namespace VMG.Animation.Core
                 // at the stagger block instead of the deeper compile path.
                 foreach (var c in stg.children)
                 {
-                    if (c is AnimateStmt || c is MotionPathStmt) continue;
-                    Debug.LogError($"[VMGFx] stagger line {c.line}: only 'animate' and 'motionPath' are allowed inside a stagger block (got {c.GetType().Name})");
+                    if (c is AnimateStmt || c is MotionPathStmt || c is KeyframesStmt) continue;
+                    Debug.LogError($"[VMGFx] stagger line {c.line}: only 'animate', 'motionPath' and 'keyframes' are allowed inside a stagger block (got {c.GetType().Name})");
                     return;
                 }
 
@@ -918,7 +920,6 @@ namespace VMG.Animation.Core
                     }
                 }
 
-                int total = targets.Count;
                 // Capture scene for non-`it` target fallback inside the
                 // lambda. Most bodies use `it`, but a stagger body is also
                 // free to reference a sibling/global by name — that path
@@ -927,15 +928,12 @@ namespace VMG.Animation.Core
                 var sceneRef = scene;
                 tl.Stagger<Component>(targets, (Component childTarget, int idx, int n) =>
                 {
-                    // Build one VMGAnimate per child by re-running the body
-                    // with it/i/n substituted. The body usually has one
-                    // statement; multiple statements all attach to the same
-                    // builder (sequential AnimateStmt/MotionPathStmt would
-                    // need a per-child mini-timeline — we currently take the
-                    // *last* configured tween as the child contribution and
-                    // warn). For the common one-statement case this is a
-                    // 1:1 mapping.
-                    VMGAnimate builder = null;
+                    // Build a fresh mini-timeline per child and add every
+                    // statement to it. Parent's per-child offset is applied
+                    // once to the whole mini, so a 3-statement body (pulse +
+                    // spin + tint) stays in lockstep within each child.
+                    var mini = VMGFx.Timeline();
+                    tl.CopyDefaultsTo(mini);
                     foreach (var c in stg.children)
                     {
                         if (c is AnimateStmt aSrc)
@@ -947,10 +945,15 @@ namespace VMG.Animation.Core
                                 Debug.LogError($"[VMGFx] stagger line {a.line}: target '{a.target}' did not resolve for child #{idx} ('{childTarget?.name}')");
                                 continue;
                             }
-                            if (builder != null)
-                                Debug.LogWarning($"[VMGFx] stagger line {a.line}: multiple animate/motionPath statements in a stagger block — only the last one's tween is staggered. Wrap each in its own stagger block for now.");
-                            builder = VMGFx.Animate(resolved);
+                            var builder = VMGFx.Animate(resolved);
                             ConfigureAnimate(builder, a.path, a.toValue, a.attrs, resolved);
+                            // Mirror BuildStandaloneAnimate's positioning: use
+                            // the per-statement `at=` attr if present (lets a
+                            // body interleave statements via at=+0.1 etc.),
+                            // otherwise default to End() so statements
+                            // sequence by appearance order inside the mini.
+                            var stmtAt = ExtractAtAttr(a.attrs);
+                            mini.Add(builder, stmtAt);
                         }
                         else if (c is MotionPathStmt mSrc)
                         {
@@ -961,14 +964,42 @@ namespace VMG.Animation.Core
                                 Debug.LogError($"[VMGFx] stagger line {m.line}: motionPath target '{m.target}' did not resolve for child #{idx} ('{childTarget?.name}')");
                                 continue;
                             }
-                            if (builder != null)
-                                Debug.LogWarning($"[VMGFx] stagger line {m.line}: multiple animate/motionPath statements in a stagger block — only the last one's tween is staggered.");
-                            builder = VMGFx.Animate(resolved);
+                            var builder = VMGFx.Animate(resolved);
                             ConfigureMotionPath(builder, m.attrs, compiled);
+                            var stmtAt = ExtractAtAttr(m.attrs);
+                            mini.Add(builder, stmtAt);
+                        }
+                        else if (c is KeyframesStmt kSrc)
+                        {
+                            var k = CloneKeyframesForStagger(kSrc, idx, n);
+                            var resolved = ResolveStaggerChildTarget(k.target, childTarget, sceneRef, root, null);
+                            if (resolved == null)
+                            {
+                                Debug.LogError($"[VMGFx] stagger line {k.line}: keyframes target '{k.target}' did not resolve for child #{idx} ('{childTarget?.name}')");
+                                continue;
+                            }
+                            // ExpandKeyframesIntoTimeline already handles
+                            // the block's `at=` attr against the timeline's
+                            // current end, so within the mini the same
+                            // sequencing logic applies for free.
+                            ExpandKeyframesIntoTimeline(mini, k, resolved);
                         }
                     }
-                    return builder;
+                    return mini;
                 }, step, from, at, seed);
+            }
+
+            // Pull and strip the `at=` attribute from a per-statement attr
+            // bag. The remaining attrs continue to flow to
+            // ConfigureAnimate / ConfigureMotionPath, which both also peek
+            // at `at=` — leaving it in would be harmless but redundant.
+            // Returning End() when absent matches mini.Add's default and
+            // lets statements sequence in declaration order.
+            static VMGAt ExtractAtAttr(Dictionary<string, string> attrs)
+            {
+                if (attrs == null) return VMGAt.End();
+                if (!attrs.TryGetValue("at", out var raw)) return VMGAt.End();
+                return string.IsNullOrEmpty(raw) ? VMGAt.End() : VMGAt.Parse(raw);
             }
 
             // Wildcard target resolution. Only `<group>/*` is supported this
@@ -1028,8 +1059,9 @@ namespace VMG.Animation.Core
                 {
                     if (childPrimary == null) return null;
                     if (string.IsNullOrEmpty(path)) return childPrimary;
-                    // If the path doesn't compile on the primary, fall back
+                    // Reserved Transform leaves and primary-misses fall back
                     // to the Transform — same rule as PickByPath.
+                    if (IsTransformReservedPath(path)) return childPrimary.transform;
                     if (VMG.Animation.VMGFieldPathCompiler.TryCompile(childPrimary.GetType(), path, out _, out _))
                         return childPrimary;
                     return childPrimary.transform;
@@ -1082,6 +1114,50 @@ namespace VMG.Animation.Core
                     line = src.line,
                     target = src.target,
                     attrs = attrs,
+                };
+            }
+
+            // Clone a KeyframesStmt for a specific stagger index. Block-
+            // level attrs, every frame's channel values, and each frame's
+            // easeOverride are walked for `i`/`n` token substitution so
+            // expressions like `0%: localPosition=random(...,i)` or
+            // `delay=i*0.05` work the same way they do in animate /
+            // motionPath bodies. Frames are deep-copied so the original
+            // AST stays intact for OnEnable re-runs.
+            static KeyframesStmt CloneKeyframesForStagger(KeyframesStmt src, int index, int total)
+            {
+                var attrs = new Dictionary<string, string>();
+                if (src.attrs != null)
+                {
+                    foreach (var kv in src.attrs)
+                        attrs[kv.Key] = SubstituteStaggerVars(kv.Value, index, total);
+                }
+                var frames = new List<Keyframe>(src.frames != null ? src.frames.Count : 0);
+                if (src.frames != null)
+                {
+                    foreach (var f in src.frames)
+                    {
+                        var values = new Dictionary<string, string>();
+                        if (f.values != null)
+                        {
+                            foreach (var kv in f.values)
+                                values[kv.Key] = SubstituteStaggerVars(kv.Value, index, total);
+                        }
+                        frames.Add(new Keyframe
+                        {
+                            pct = f.pct,
+                            line = f.line,
+                            values = values,
+                            easeOverride = SubstituteStaggerVars(f.easeOverride, index, total),
+                        });
+                    }
+                }
+                return new KeyframesStmt
+                {
+                    line = src.line,
+                    target = src.target,
+                    attrs = attrs,
+                    frames = frames,
                 };
             }
 
@@ -1610,58 +1686,71 @@ namespace VMG.Animation.Core
                     }
                 }
 
+                // Handle loop/alternate for in-timeline blocks by emitting
+                // multiple copies inline. A child-timeline approach doesn't
+                // work cleanly here because the parent's Seek clamps each
+                // child to one iteration's worth of time, so a looping child
+                // timeline never advances past iteration 0. Inline copies
+                // sidestep that by laying every cycle on the parent's clock.
+                if (loopInfinite)
+                {
+                    Debug.LogError("[VMGFx] keyframes 'loop' (infinite) inside a timeline is not supported — repetition span is undefined when the parent doesn't loop. Use 'loop=<count>' to expand inline, or move the keyframes outside the timeline and loop the whole timeline.");
+                    return;
+                }
+                int cycles = Mathf.Max(1, loopCount);
+
                 // For each channel, walk adjacent frame pairs that BOTH define
-                // it and emit a FromTo segment animate.
+                // it and emit a FromTo segment animate. With cycles > 1 we
+                // lay them back-to-back; with `alternate` every odd cycle
+                // swaps from/to.
                 foreach (var path in channels)
                 {
                     var channelType = ResolveChannelType(target, path);
 
-                    Keyframe prev = null;
-                    foreach (var cur in kf.frames)
+                    for (int cycle = 0; cycle < cycles; cycle++)
                     {
-                        if (!cur.values.ContainsKey(path)) continue;
-                        if (prev == null) { prev = cur; continue; }
+                        float cycleStartSec = anchorSec + cycle * blockDuration;
+                        bool reverseCycle = alternate && (cycle & 1) == 1;
 
-                        // Emit prev → cur segment.
-                        string fromRaw = prev.values[path];
-                        string toRaw = cur.values[path];
-                        float segStartPct = prev.pct;
-                        float segEndPct = cur.pct;
-                        float segDurationSec = Mathf.Max(0.0001f, (segEndPct - segStartPct) / 100f * blockDuration);
-                        float segStartSec = segStartPct / 100f * blockDuration;
+                        Keyframe prev = null;
+                        foreach (var cur in kf.frames)
+                        {
+                            if (!cur.values.ContainsKey(path)) continue;
+                            if (prev == null) { prev = cur; continue; }
 
-                        var seg = VMGFx.Animate(target);
-                        ApplyTypedFromTo(seg, path, channelType, fromRaw, toRaw);
-                        seg.Duration(segDurationSec);
-                        // Per-segment ease = the *target* (cur) frame's ease
-                        // override if set, else the block ease. Matches CSS's
-                        // "animation-timing-function on a keyframe applies to
-                        // the segment ENDING at that keyframe" rule (anime.js
-                        // does the same).
-                        if (!string.IsNullOrEmpty(cur.easeOverride)) seg.Ease(ResolveEase(cur.easeOverride));
-                        else if (hasBlockEase) seg.Ease(blockEase);
+                            // Emit prev → cur segment.
+                            string fromRaw = prev.values[path];
+                            string toRaw = cur.values[path];
+                            float segStartPct = prev.pct;
+                            float segEndPct = cur.pct;
+                            float segDurationSec = Mathf.Max(0.0001f, (segEndPct - segStartPct) / 100f * blockDuration);
+                            float segStartSec = reverseCycle
+                                ? (100f - segEndPct) / 100f * blockDuration
+                                : segStartPct / 100f * blockDuration;
 
-                        // All segments anchor against anchorSec captured at
-                        // function entry. Critical: do NOT re-read
-                        // tl.iterationDuration here — it grows with each Add
-                        // and would push later channels past the first.
-                        tl.Add(seg, VMGAt.Time(anchorSec + segStartSec));
+                            var seg = VMGFx.Animate(target);
+                            // Swap from/to on reverse cycles so the channel
+                            // plays back the other way through the same frames.
+                            if (reverseCycle) ApplyTypedFromTo(seg, path, channelType, toRaw, fromRaw);
+                            else ApplyTypedFromTo(seg, path, channelType, fromRaw, toRaw);
+                            seg.Duration(segDurationSec);
+                            // Per-segment ease = the *target* (cur) frame's ease
+                            // override if set, else the block ease. Matches CSS's
+                            // "animation-timing-function on a keyframe applies to
+                            // the segment ENDING at that keyframe" rule (anime.js
+                            // does the same).
+                            if (!string.IsNullOrEmpty(cur.easeOverride)) seg.Ease(ResolveEase(cur.easeOverride));
+                            else if (hasBlockEase) seg.Ease(blockEase);
 
-                        prev = cur;
+                            // All segments anchor against anchorSec captured at
+                            // function entry. Critical: do NOT re-read
+                            // tl.iterationDuration here — it grows with each Add
+                            // and would push later channels past the first.
+                            tl.Add(seg, VMGAt.Time(cycleStartSec + segStartSec));
+
+                            prev = cur;
+                        }
                     }
-                }
-
-                // Loop / alternate / delay applied to the timeline as a whole
-                // are not safe to set here (would affect *all* children, not
-                // just this block). The DSL surfaces them only on the
-                // enclosing timeline. We warn if user set them on a nested
-                // block.
-                if (loopInfinite || loopCount > 1 || alternate)
-                {
-                    Debug.LogWarning("[VMGFx] keyframes loop/alternate inside a timeline applies to the whole timeline; move them to the timeline header.");
-                    if (loopInfinite) tl.Loop();
-                    else if (loopCount > 1) tl.Loop(loopCount);
-                    if (alternate) tl.Alternate();
                 }
             }
 
@@ -1829,16 +1918,39 @@ namespace VMG.Animation.Core
 
             // Choose between the primary renderer component and the Transform
             // by checking which one owns the requested field path. Transform
-            // wins only when the primary doesn't resolve the path.
+            // wins for the reserved local* leaves regardless of whether the
+            // primary happens to resolve a same-named member, and otherwise
+            // when the primary doesn't resolve the path at all.
             static Component PickByPath(Component primary, Transform tr, string path)
             {
                 if (primary == null) return tr;
                 if (string.IsNullOrEmpty(path)) return primary;
+                if (tr != null && IsTransformReservedPath(path)) return tr;
                 if (VMG.Animation.VMGFieldPathCompiler.TryCompile(primary.GetType(), path, out _, out _))
                     return primary;
                 if (tr != null && VMG.Animation.VMGFieldPathCompiler.TryCompile(tr.GetType(), path, out _, out _))
                     return tr;
                 return primary;
+            }
+
+            // Paths whose first segment names a universal Transform channel.
+            // Anchored here (not in VMGFieldPathCompiler) because this is a
+            // target-routing rule, not a member-resolution rule.
+            static bool IsTransformReservedPath(string path)
+            {
+                if (string.IsNullOrEmpty(path)) return false;
+                int dot = path.IndexOf('.');
+                string head = dot < 0 ? path : path.Substring(0, dot);
+                switch (head)
+                {
+                    case "localPosition":
+                    case "localScale":
+                    case "localRotation":
+                    case "localEulerAngles":
+                        return true;
+                    default:
+                        return false;
+                }
             }
 
             // motionPath statement → builder.AlongPath(points, closed) plus

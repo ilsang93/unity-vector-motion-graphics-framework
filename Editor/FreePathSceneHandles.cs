@@ -190,10 +190,15 @@ namespace VMG.EditorTools
                 {
                     Rect btn = new Rect(box.x + 6f + i * (btnW + 4f), box.y + 20f, btnW, 18f);
                     GUIStyle style;
+                    // ShapeStack.MaxSlots is a compile-time const, so two of
+                    // these branches are statically dead — kept for the
+                    // single-slot case in case the const ever changes.
+#pragma warning disable 162
                     if (ShapeStack.MaxSlots == 1) style = EditorStyles.miniButton;
                     else if (i == 0) style = EditorStyles.miniButtonLeft;
                     else if (i == ShapeStack.MaxSlots - 1) style = EditorStyles.miniButtonRight;
                     else style = EditorStyles.miniButtonMid;
+#pragma warning restore 162
 
                     var slot = stack.GetSlot(i);
                     string label = "S" + i + " (" + slot.intensity.ToString("0.##") + ")";

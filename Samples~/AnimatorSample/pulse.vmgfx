@@ -1,0 +1,15 @@
+// pulse.vmgfx — minimal VMGAnimator script.
+// Drives the renderer this script is attached to. `root` (alias for
+// the GameObject the VMGAnimator lives on) is the implicit target;
+// `/` and the empty target work too. Drop on any GameObject with a
+// VectorImageGraphic + VMGAnimator, set
+//   Mode  = Internal
+//   Script = this asset
+// and enable "Play On Enable" or hit Play to see a 1-second breathing
+// loop that ping-pongs scale and fill colour.
+
+keyframes root duration=1 ease=easeInOutSine {
+  0%:   localScale=1,1     Fill.color=#5ee0ff
+  50%:  localScale=1.2,1.2 Fill.color=#ff5ea8
+  100%: localScale=1,1     Fill.color=#5ee0ff
+}

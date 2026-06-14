@@ -37,3 +37,16 @@ in its own slot and animate the intensities. A simple recipe:
 
 Slots are weighted equally; there's no "base" slot. Three or four
 active slots produce a smooth N-way blend.
+
+### Live morph demo without an Animator
+
+Add the `VMGDemoShapeMorph` component on the same Vector Image to
+ping-pong Slot 0 ↔ Slot 1 intensities each frame:
+
+- `Speed` controls cycles per second (one cycle = A → B → A).
+- `Ease` smoothstep blends the linear ping-pong toward a hold-and-snap
+  feel (0 = pure linear, 1 = full smoothstep).
+
+The renderer's dirty-flag detects the per-frame intensity change via
+its snapshot equality check, so the mesh updates cleanly without any
+explicit `SetMeshDirty()` call.

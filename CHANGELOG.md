@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.37.0] - 2026-06-14
+
+Small Timeline-editor quality-of-life fix plus two sample
+additions. No runtime API changes; safe drop-in over 0.36.0.
+
+### Added
+
+- **Ctrl+D / Cmd+D duplicates the selected keys in the VMG
+  Timeline window.** Copies the current selection and pastes it
+  immediately past the last selected key — start time is `tMax +
+  oneSnapTick` (or `0.05s` when snap is off). Multi-track
+  selections keep their relative layout via `VMGKeyClipboard`'s
+  per-entry `relativeTrack` / `relativeTime`. The selection is
+  replaced with the new copies so the user can keep tweaking
+  without re-clicking. The right-click menu on a track also
+  gains a matching "Duplicate N Key(s)" item. Routes through
+  Unity's standard "Duplicate" command, so it inherits the OS
+  modifier (Cmd on macOS) automatically.
+- **BasicShapes sample gains a `VMGDemoShapeMorph` component.**
+  Ping-pongs `Slot 0` ↔ `Slot 1` intensities on a `ShapeStack`
+  to give a live circle ⇄ rectangle morph without an Animator.
+  `Speed` controls cycles per second; `Ease` smoothstep blends
+  the linear ping-pong toward a hold-and-snap feel. README adds
+  a short "Live morph demo without an Animator" section.
+- **AnimatorSample — new sample package.** Two `.vmgfx`
+  scripts that show how to drive `VMGAnimator` from a text
+  asset (no `AnimationClip`):
+  - `pulse.vmgfx` — minimal `keyframes` block on `root`, ping-
+    pongs `localScale` + `Fill.color` over one second.
+  - `intro-card.vmgfx` — a 2-second logo intro that exercises
+    `add` / `group` / `timeline` / `stagger` together with
+    labels, relative positions (`at=headlineIn+0.2`), spring
+    easing, and a `call introDone at=2` event hook.
+  Registered in `package.json` under `samples` so users can
+  import it from the Package Manager UI alongside Basic Shapes,
+  DOTween Integration, and SVG Import.
+
+### Changed
+
+- **BasicShapes sample description in `package.json`** now
+  mentions the new ShapeStack morph demo alongside the original
+  trim circle / rounded rectangle / progress ring set.
+
 ## [0.36.0] - 2026-06-14
 
 Renderer dirty-flag — both `VectorImageGraphic` (UGUI) and

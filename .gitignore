@@ -28,6 +28,7 @@ NOTES.md.meta
 SCRATCH.md
 SCRATCH.md.meta
 
-# Retired / author-time-only samples — not shipped
-Samples~/AnimatorSample/
-Samples~/AnimatorSample.meta
+# Author-time-only files not shipped with the package would go here.
+# (AnimatorSample/ was retired when the Animator JSON track was dropped
+#  in 2026-06-13, then re-introduced in 0.37.0 with DSL-based .vmgfx
+#  scripts — the directory is shipped again.)

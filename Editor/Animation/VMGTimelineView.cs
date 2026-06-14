@@ -1255,6 +1255,7 @@ namespace VMG.EditorTools.Animation
                     if (e.commandName == "Copy" && m_Selection.HasSelection) { e.Use(); break; }
                     if (e.commandName == "Paste" && VMGKeyClipboard.HasContent) { e.Use(); break; }
                     if (e.commandName == "Delete" && m_Selection.HasSelection) { e.Use(); break; }
+                    if (e.commandName == "Duplicate" && m_Selection.HasSelection) { e.Use(); break; }
                     break;
                 }
                 case EventType.ExecuteCommand:
@@ -1274,6 +1275,12 @@ namespace VMG.EditorTools.Animation
                     else if (e.commandName == "Delete" && m_Selection.HasSelection)
                     {
                         DeleteSelectedKeys(clip);
+                        e.Use();
+                        GUI.changed = true;
+                    }
+                    else if (e.commandName == "Duplicate" && m_Selection.HasSelection)
+                    {
+                        DuplicateSelectedKeys(clip);
                         e.Use();
                         GUI.changed = true;
                     }
@@ -1759,6 +1766,10 @@ namespace VMG.EditorTools.Animation
             else
                 menu.AddDisabledItem(new GUIContent("Paste Keys (clipboard empty)"));
             if (m_Selection.HasSelection)
+                menu.AddItem(new GUIContent($"Duplicate {m_Selection.Count} Key(s)"), false, () => DuplicateSelectedKeys(clip));
+            else
+                menu.AddDisabledItem(new GUIContent("Duplicate Key(s) (none selected)"));
+            if (m_Selection.HasSelection)
                 menu.AddItem(new GUIContent($"Delete {m_Selection.Count} Key(s)"), false, () => DeleteSelectedKeys(clip));
             else
                 menu.AddDisabledItem(new GUIContent("Delete Key(s) (none selected)"));
@@ -1970,6 +1981,45 @@ namespace VMG.EditorTools.Animation
             float start = animator.progress * Mathf.Max(0.0001f, clip.duration);
             int preferred = m_Selection.trackIndex; // -1 if no selection
             var sel = VMGKeyClipboard.Paste(clip, start, preferred, out var warnings);
+            foreach (var w in warnings) Debug.LogWarning($"[VMG.Animation] {w}");
+            VMGTimelineSelection.MarkDirty(clip);
+            m_Selection.ReplaceWith(sel);
+        }
+
+        // Ctrl+D: copy the current selection and immediately paste it just
+        // past the last selected key. Shift = one snap tick (or 0.05s when
+        // snap is off). Topmost selected track becomes the base, so multi-
+        // track selections keep their relative layout via VMGKeyClipboard.
+        void DuplicateSelectedKeys(VMGAnimationClip clip)
+        {
+            if (clip == null || !m_Selection.HasSelection) return;
+
+            float tMin = float.MaxValue, tMax = float.MinValue;
+            int baseTrack = int.MaxValue;
+            foreach (var it in m_Selection.Items)
+            {
+                if (it.track < 0 || it.track >= clip.tracks.Count) continue;
+                var tr = clip.tracks[it.track];
+                if (tr == null || it.key < 0 || it.key >= tr.keys.Count) continue;
+                float t = tr.keys[it.key].time;
+                if (t < tMin) tMin = t;
+                if (t > tMax) tMax = t;
+                if (it.track < baseTrack) baseTrack = it.track;
+            }
+            if (tMin == float.MaxValue) return;
+
+            float step = clip.snapDivisor > 0 ? (1f / clip.snapDivisor) : 0.05f;
+            float span = tMax - tMin;
+            float start = tMax + step;
+            // For a multi-key block, anchor so the first new key lands at
+            // (oldLast + step) instead of (oldFirst + span + step). The
+            // clipboard pastes at "start + relativeTime" where the smallest
+            // relativeTime is 0, so start needs to be (tMin + span + step).
+            // tMax == tMin + span already, so start = tMax + step is correct.
+
+            Undo.RecordObject(clip, "Duplicate VMG Keys");
+            VMGKeyClipboard.Copy(clip, m_Selection.Items);
+            var sel = VMGKeyClipboard.Paste(clip, start, baseTrack, out var warnings);
             foreach (var w in warnings) Debug.LogWarning($"[VMG.Animation] {w}");
             VMGTimelineSelection.MarkDirty(clip);
             m_Selection.ReplaceWith(sel);

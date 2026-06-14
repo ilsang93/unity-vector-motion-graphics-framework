@@ -1,0 +1,56 @@
+// intro-card.vmgfx — a self-contained 2-second logo intro.
+// Demonstrates the four most-used DSL building blocks:
+//
+//   add         — spawn child VectorImageGraphics at authored positions
+//   group       — gather children so `stagger group/*` can target them
+//   timeline    — orchestrate concurrent tweens with labels + relative
+//                 positions (`at=label+0.1`)
+//   stagger     — fan out one tween across N children with a step delay
+//
+// Drop the script on a UI Canvas GameObject that has a VMGAnimator
+// (Mode = Internal, Script = this asset). When VMGAnimator runs it
+// will create the children itself — no scene wiring required.
+
+// ---- Backdrop card ----
+add card roundedRect size=320,180 cornerRadius=18 fill=#10141c stroke=#3a4660,2
+
+// ---- Headline (a single rounded bar standing in for text) ----
+add headline rect size=180,18 fill=#5ee0ff position=0,18
+
+// ---- Three dots beneath the headline ----
+group dots {
+  add d0 circle size=12 fill=#ff5ea8 position=-30,-22
+  add d1 circle size=12 fill=#ffd166 position=0,-22
+  add d2 circle size=12 fill=#a0ffd6 position=30,-22
+}
+
+// =====================================================================
+// MAIN TIMELINE — 2 seconds, plays once per Play() call.
+// VMGAnimator drives progress 0..1 over Clip Length, so the timeline's
+// `loop` keyword is intentionally absent here; loop at the animator
+// level instead if you want it to repeat.
+// =====================================================================
+timeline duration=2 {
+
+  // Card pops in with a snappy spring.
+  animate card localScale -> 1,1 from=0,0 duration=0.6 ease=spring(180,12,1,0) at=0
+
+  // Headline slides up from below with a slight delay.
+  label headlineIn at=0.3
+  animate headline localPosition -> 0,18 from=0,-20 duration=0.5 ease=outQuad at=headlineIn
+  animate headline Fill.color -> #ffffff from=#5ee0ff duration=0.5 at=headlineIn
+
+  // Dots pop in one by one, anchored to the headline's arrival.
+  stagger dots/* step=0.08 from=first at=headlineIn+0.2 {
+    animate it localScale -> 1.4,1.4 from=0,0 duration=0.35 ease=outBack
+  }
+
+  // Final beat: card breathes a bit so the loop feels alive when
+  // VMGAnimator's `loopScript` is enabled.
+  animate card Stroke.width -> 4 from=2 duration=0.3 ease=outQuad at=1.6
+  animate card Stroke.color -> #5ee0ff from=#3a4660 duration=0.3 at=1.6
+
+  // Event hook — call any UnityEvent named "introDone" on the
+  // animator's bindings if one is wired up.
+  call introDone at=2
+}

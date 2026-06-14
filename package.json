@@ -1,6 +1,6 @@
 {
   "name": "com.ilsang.vmg",
-  "version": "0.36.0",
+  "version": "0.37.0",
   "displayName": "Ilsang VMG - Vector Motion Graphics Framework",
   "description": "Procedural vector motion graphics runtime for Unity. AE-style shape layers (path/stroke/fill/trim/round corner) with full Animator/Timeline integration for both UGUI and world-space rendering.",
   "unity": "6000.3",
@@ -22,7 +22,7 @@
   "samples": [
     {
       "displayName": "Basic Shapes",
-      "description": "Animated trim circle, rounded rectangle and progress ring demos.",
+      "description": "Animated trim circle, rounded rectangle and a ShapeStack circle ↔ rectangle morph demo.",
       "path": "Samples~/BasicShapes"
     },
     {
@@ -34,6 +34,11 @@
       "displayName": "SVG Import",
       "description": "Sample .svg icons (heart, star) demonstrating the SVG ScriptedImporter and renderer integration.",
       "path": "Samples~/SvgImport"
+    },
+    {
+      "displayName": "Animator",
+      "description": "Two .vmgfx scripts (a minimal pulse and a 2s logo intro) showing how to drive VMGAnimator from a text asset — no AnimationClip required.",
+      "path": "Samples~/AnimatorSample"
     }
   ]
 }

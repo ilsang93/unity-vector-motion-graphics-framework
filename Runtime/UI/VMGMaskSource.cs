@@ -79,13 +79,17 @@ namespace VMG.UI
 
             int parentBits = group.ParentBits;
             int refValue = parentBits | bit;
-            int readMask = parentBits | bit;
+            int readMask = parentBits;
             int writeMask = bit;
 
-            // CompareFunction.Equal so the stamp only lands where every
-            // ancestor standard Mask has already written its bit; this
-            // keeps the VMG mask region clipped to the outer Mask. Replace
-            // writes Ref & writeMask = `bit`, so ancestor bits stay intact.
+            // CompareFunction.Equal vs parentBits-only readMask: the stamp
+            // lands wherever every ancestor standard Mask has written its
+            // bit, REGARDLESS of whether this source has already stamped
+            // its own bit there. Including the own bit in readMask would
+            // be a self-contradiction — the first pixel can't pass the
+            // test because the bit isn't set yet. Replace writes
+            // (Ref & writeMask) = bit, so the own bit is set and ancestor
+            // bits are preserved (writeMask excludes them).
             var mat = StencilMaterial.Add(
                 baseMaterial,
                 refValue,

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.41.1] - 2026-06-17
+
+### Fixed
+
+- **`VMGMaskSource` stencil self-contradiction.** The source's ReadMask
+  included its own bit, so the first pixel rendered for any source
+  failed the `Comp=Equal` test (the bit it was about to write was not
+  yet set in the buffer) — the source never stamped, the client
+  never had a region to compare against, and the mask appeared
+  inert. ReadMask now contains only the ancestor parent bits, which
+  matches Unity's standard `Mask` pattern. Effect: VMG masks now
+  work at the top level (parentBits=0 → ReadMask=0 → test always
+  passes) and inside an ancestor standard Mask (ReadMask=parentBits
+  clips to the ancestor region). Bit-isolation between simultaneous
+  groups is unaffected because WriteMask is still the own bit.
+
 ## [0.41.0] - 2026-06-17
 
 Stencil-based multi-source dynamic mask (W4). Several animated VMG

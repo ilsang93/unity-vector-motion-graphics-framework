@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.41.2] - 2026-06-17
+
+### Fixed
+
+- **Degenerate fill emits a visible band via the AA ring.** A
+  polygon authored at zero area (e.g. a rectangle with size (W, 0))
+  has no interior triangles, but `FillMeshBuilder` still emitted
+  the outset AA ring around each edge — which on opposite sides of
+  a zero-height rect produces a visible band several pixels wide
+  (the ring width is 0.5% of the longer dimension). Surfaced via
+  the mask-source workflow: a "zero-thickness line" used as a mask
+  shape unexpectedly stamped a line-shaped region into the
+  stencil. The fix skips the AA ring when the polygon's bounding
+  box collapses below a sub-pixel threshold on either axis. The
+  interior triangulation still runs (it's free and produces no
+  pixels anyway) — only the ring is suppressed.
+
 ## [0.41.1] - 2026-06-17
 
 ### Fixed

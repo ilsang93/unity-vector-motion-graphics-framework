@@ -32,6 +32,15 @@ namespace VMG.Core
             // 1→0 ramp.
             for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col, 1f);
 
+            // Skip the AA ring on a degenerate polygon — when one bounding
+            // dimension collapses to zero (e.g. a rectangle authored at
+            // size (W, 0)) the interior mesh has no area but the outset
+            // ring still emits a band of OutsetWidthFor(...) on each side,
+            // producing a visible line. A user who authored a zero-area
+            // shape expects nothing to render. Detection: longer-side
+            // threshold matches OutsetWidthFor's degenerate-clamp floor.
+            if (PolygonIsDegenerate(s_poly)) return;
+
             // Outset AA ring along the original polyline. The interior side
             // (distance=1) sits exactly on the polyline so it z-orders flush
             // with the fill body; the outer side (distance=0) sits one
@@ -40,6 +49,28 @@ namespace VMG.Core
             // band width itself doesn't matter visually as long as it
             // straddles the boundary.
             EmitAaRing(s_poly, OutsetWidthFor(s_poly), col, mb);
+        }
+
+        // A polygon counts as degenerate when either bounding dimension
+        // collapses below a sub-pixel threshold. We only suppress the AA
+        // ring (not the interior triangulation) — the interior is already
+        // zero-area, so there's nothing left to render once the ring is
+        // dropped. Threshold is well under one screen pixel at any sane
+        // zoom so it never trips on real shapes.
+        private static bool PolygonIsDegenerate(List<Vector2> poly)
+        {
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
+            for (int i = 0; i < poly.Count; i++)
+            {
+                var v = poly[i];
+                if (v.x < minX) minX = v.x;
+                if (v.y < minY) minY = v.y;
+                if (v.x > maxX) maxX = v.x;
+                if (v.y > maxY) maxY = v.y;
+            }
+            const float kEps = 1e-3f;
+            return (maxX - minX) <= kEps || (maxY - minY) <= kEps;
         }
 
         // Boundary band width. Self-scaling against the polygon's larger

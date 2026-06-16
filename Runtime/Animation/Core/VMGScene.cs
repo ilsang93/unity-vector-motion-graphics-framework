@@ -179,7 +179,19 @@ namespace VMG.Animation.Core
 
             g.FitToRect = d.m_FitToRect;
 
-            ApplyShapeStack(ref g.ShapeStack, d);
+            // SVG-backed descriptors take the renderer's SvgAsset path,
+            // which short-circuits the procedural ShapeStack pipeline. We
+            // still copy Fill/Stroke/etc. since SVG assets can be tinted
+            // by the renderer's color, but slot 0 is left to the asset.
+            if (d is VMGSvgDescriptor svg)
+            {
+                g.SvgAsset = svg.m_SvgAsset;
+            }
+            else
+            {
+                g.SvgAsset = null;
+                ApplyShapeStack(ref g.ShapeStack, d);
+            }
             g.Fill = d.m_Fill;
             g.Stroke = d.m_Stroke;
             g.RoundCorners = d.m_RoundCorners;
@@ -200,7 +212,15 @@ namespace VMG.Animation.Core
         {
             ApplyShared(go, d);
 
-            ApplyShapeStack(ref r.ShapeStack, d);
+            if (d is VMGSvgDescriptor svg)
+            {
+                r.SvgAsset = svg.m_SvgAsset;
+            }
+            else
+            {
+                r.SvgAsset = null;
+                ApplyShapeStack(ref r.ShapeStack, d);
+            }
             r.Fill = d.m_Fill;
             r.Stroke = d.m_Stroke;
             r.RoundCorners = d.m_RoundCorners;

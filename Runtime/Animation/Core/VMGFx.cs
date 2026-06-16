@@ -39,5 +39,6 @@ namespace VMG.Animation.Core
         public static VMGRoundedRectangleDescriptor RoundedRectangle() => new VMGRoundedRectangleDescriptor();
         public static VMGPolygonDescriptor Polygon() => new VMGPolygonDescriptor();
         public static VMGPathDescriptor Path() => new VMGPathDescriptor();
+        public static VMGSvgDescriptor Svg() => new VMGSvgDescriptor();
     }
 }

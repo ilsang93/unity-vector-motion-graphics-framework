@@ -42,7 +42,7 @@ namespace VMG.Animation
             public string name;
             public UnityEngine.Object asset;
         }
-        [Tooltip("Named assets the script can look up via asset(name). Currently consumed by motionPath path=asset(...).")]
+        [Tooltip("Named assets the script can look up via asset(name). Consumed by `motionPath path=asset(...)` and `add <name> svg asset=<name>`.")]
         public List<NamedAsset> assets = new List<NamedAsset>();
 
         public bool IsReady { get; private set; }

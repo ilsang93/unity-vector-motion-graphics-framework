@@ -26,6 +26,7 @@ namespace VMG.EditorTools.Animation
         SerializedProperty m_FireEventsInExternalMode;
         SerializedProperty m_PlayOnEnable;
         SerializedProperty m_LoopScript;
+        SerializedProperty m_Assets;
 
         static readonly GUIContent k_ScriptLabel = new GUIContent("Script", "Optional VMGFx TextAsset (.vmgfx or .txt). When set, takes priority over Clip.");
         static readonly GUIContent k_ClipLabel = new GUIContent("Clip");
@@ -48,6 +49,7 @@ namespace VMG.EditorTools.Animation
             m_FireEventsInExternalMode = serializedObject.FindProperty(nameof(VMGAnimator.fireEventsInExternalMode));
             m_PlayOnEnable = serializedObject.FindProperty(nameof(VMGAnimator.playOnEnable));
             m_LoopScript = serializedObject.FindProperty(nameof(VMGAnimator.loopScript));
+            m_Assets = serializedObject.FindProperty(nameof(VMGAnimator.assets));
             VMGTimelineSelection.Changed += OnSelectionChanged;
             VMGTimelineSelection.DataChanged += OnSelectionChanged;
         }
@@ -70,6 +72,7 @@ namespace VMG.EditorTools.Animation
             var animator = (VMGAnimator)target;
 
             DrawScriptSection();
+            DrawAssetsSection();
             EditorGUILayout.Space();
             DrawClipSection();
             DrawEmptyStateCreateBar(animator);
@@ -91,6 +94,15 @@ namespace VMG.EditorTools.Animation
             {
                 EditorGUILayout.HelpBox("Script is set — it takes priority over Clip at runtime.", MessageType.None);
             }
+        }
+
+        // Named-asset registry the script can look up via asset(name). Surfaced
+        // alongside Script because that's the only consumer; visible only when
+        // a Script is assigned to keep the inspector minimal in clip mode.
+        void DrawAssetsSection()
+        {
+            if (m_Script.objectReferenceValue == null) return;
+            EditorGUILayout.PropertyField(m_Assets, true);
         }
 
         void DrawEmptyStateCreateBar(VMGAnimator animator)

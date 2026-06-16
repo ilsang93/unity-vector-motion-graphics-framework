@@ -834,8 +834,8 @@ namespace VMG.Animation.Core
                 // Pass 1: hierarchy (add / group).
                 foreach (var s in statements)
                 {
-                    if (s is AddStmt addS) ApplyAdd(addS, scene);
-                    else if (s is GroupStmt grpS) ApplyGroup(grpS, scene);
+                    if (s is AddStmt addS) ApplyAdd(addS, scene, compiled);
+                    else if (s is GroupStmt grpS) ApplyGroup(grpS, scene, compiled);
                 }
 
                 // Pass 2: animations / timelines / keyframes. We resolve
@@ -1260,27 +1260,27 @@ namespace VMG.Animation.Core
                 ExpandKeyframesIntoTimeline(tl, tmp, target);
             }
 
-            static void ApplyAdd(AddStmt s, VMGScene scene)
+            static void ApplyAdd(AddStmt s, VMGScene scene, VMGFxCompiled compiled)
             {
-                var d = MakeDescriptor(s.shape, s.attrs);
+                var d = MakeDescriptor(s.shape, s.attrs, compiled);
                 if (d == null) return;
                 ApplyDescriptorAttrs(d, s.attrs);
                 scene.Add(s.name, d);
             }
 
-            static void ApplyGroup(GroupStmt s, VMGScene scene)
+            static void ApplyGroup(GroupStmt s, VMGScene scene, VMGFxCompiled compiled)
             {
                 scene.Group(s.name, sub =>
                 {
                     foreach (var c in s.children)
                     {
-                        if (c is AddStmt addS) ApplyAdd(addS, sub);
-                        else if (c is GroupStmt grpS) ApplyGroup(grpS, sub);
+                        if (c is AddStmt addS) ApplyAdd(addS, sub, compiled);
+                        else if (c is GroupStmt grpS) ApplyGroup(grpS, sub, compiled);
                     }
                 });
             }
 
-            static VMGShapeDescriptor MakeDescriptor(string shape, Dictionary<string, string> attrs)
+            static VMGShapeDescriptor MakeDescriptor(string shape, Dictionary<string, string> attrs, VMGFxCompiled compiled)
             {
                 switch (shape)
                 {
@@ -1328,6 +1328,50 @@ namespace VMG.Animation.Core
                         }
                         if (attrs != null && attrs.TryGetValue("closed", out var closed))
                             d.Closed(ParseFlag(closed));
+                        return d;
+                    }
+                    case "svg":
+                    {
+                        // `add <name> svg asset=<name>` — bind a VMGShapeAsset
+                        // registered on the VMGAnimator (or its `assets`
+                        // dictionary) to the spawned renderer's SvgAsset slot.
+                        // The asset= attr accepts the same asset(name) form
+                        // as motionPath path=asset(name) for consistency, and
+                        // a bare name as shorthand.
+                        var d = VMGFx.Svg();
+                        if (attrs == null || !attrs.TryGetValue("asset", out var raw))
+                        {
+                            Debug.LogError("[VMGFx] add svg requires asset=<name> or asset=asset(<name>)");
+                            return null;
+                        }
+                        VMGShapeAsset svgAsset = null;
+                        if (TryResolveAssetExpr(raw, compiled, out var obj))
+                        {
+                            svgAsset = obj as VMGShapeAsset;
+                        }
+                        else if (compiled != null && compiled.assetLookup != null &&
+                                 compiled.assetLookup.TryGetValue(raw.Trim(), out var bareObj))
+                        {
+                            svgAsset = bareObj as VMGShapeAsset;
+                        }
+                        if (svgAsset == null)
+                        {
+                            // Diagnose: show what's actually in the lookup so a
+                            // typo, an empty Assets entry, or a wrong asset type
+                            // (.svg instead of .vmgshape.asset) is obvious from
+                            // the message.
+                            string have = "(empty)";
+                            if (compiled != null && compiled.assetLookup != null && compiled.assetLookup.Count > 0)
+                            {
+                                var entries = new List<string>();
+                                foreach (var kv in compiled.assetLookup)
+                                    entries.Add($"'{kv.Key}'={(kv.Value != null ? kv.Value.GetType().Name : "null")}");
+                                have = string.Join(", ", entries);
+                            }
+                            Debug.LogError($"[VMGFx] add svg: asset='{raw}' not found as a VMGShapeAsset on VMGAnimator.Assets. Registered: {have}");
+                            return null;
+                        }
+                        d.Asset(svgAsset);
                         return d;
                     }
                 }
@@ -1396,6 +1440,7 @@ namespace VMG.Animation.Core
                         case "cornerRadii":
                         case "points":
                         case "closed":
+                        case "asset":
                             break;
                         default:
                             Debug.LogWarning($"[VMGFx] unknown add attribute '{kv.Key}'");

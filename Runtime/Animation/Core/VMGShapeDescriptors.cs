@@ -1,5 +1,6 @@
 using UnityEngine;
 using VMG.Core;
+using VMG.Svg;
 
 namespace VMG.Animation.Core
 {
@@ -86,6 +87,24 @@ namespace VMG.Animation.Core
         public VMGPathDescriptor Closed(bool closed)
         {
             m_Slot0Shape.freeClosed = closed;
+            return this;
+        }
+    }
+
+    // SVG-backed shape. Bypasses the procedural ShapeStack pipeline and
+    // assigns a VMGShapeAsset directly to the renderer's SvgAsset slot.
+    // Size/Position/Rotation/Fill/Stroke from the base still apply where
+    // the renderer respects them — but slot 0 shape configuration is
+    // ignored (the SVG asset's own geometry wins).
+    public sealed class VMGSvgDescriptor : VMGShapeDescriptor<VMGSvgDescriptor>
+    {
+        internal VMGShapeAsset m_SvgAsset;
+
+        internal VMGSvgDescriptor() : base(ShapeKind.Rectangle) { }
+
+        public VMGSvgDescriptor Asset(VMGShapeAsset asset)
+        {
+            m_SvgAsset = asset;
             return this;
         }
     }

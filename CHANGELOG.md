@@ -1,5 +1,125 @@
 # Changelog
 
+## [0.41.0] - 2026-06-17
+
+Stencil-based multi-source dynamic mask (W4). Several animated VMG
+elements can collectively define a mask region whose union clips
+other content. Each source preserves its own transform/animation, so
+the visible region animates with them (the yarns-style wipe-reveal
+use case). UI / Canvas only this round.
+
+### Added
+
+- **`VMGMaskGroup`** (`Runtime/UI/`) — marker on a GameObject that
+  owns a stencil mask region. Allocates one bit from the upper
+  nibble (128 / 64 / 32 / 16) at `OnEnable`, supporting up to 4
+  simultaneously active groups. Caches the ambient standard-Mask
+  depth so nesting under Unity's `Mask` clips the VMG region to the
+  ancestor area; sufficiently deep nesting (parent depth ≥ 7) leaves
+  no free bit and the group disables with an error.
+- **`VMGMaskSource`** (`Runtime/UI/`) — `IMaterialModifier` on each
+  child Graphic of a `VMGMaskGroup`. Stamps the group's bit with
+  `StencilOp.Replace` + per-bit write mask so overlapping groups
+  don't trample each other. Forces the host `VectorImageGraphic`'s
+  `Fill` enabled so the mesh actually rasterises (the colour itself
+  is suppressed via `ColorWriteMask=0` unless `ShowSource` is true,
+  exposed for debugging the mask region).
+- **`VMGMaskClient`** (`Runtime/UI/`) — `IMaterialModifier` on a
+  Graphic that should render only where its parent `VMGMaskGroup`
+  has been stamped AND every ancestor standard Mask region matches.
+  `StencilOp.Keep` + `writeMask=0` so clients never modify the buffer.
+- **VMGFx DSL `mask <name> { ... }`** — new top-level statement.
+  Spawns a container GameObject + attaches `VMGMaskGroup`, and every
+  `add` inside the block becomes a mask source (`VMGMaskSource`
+  auto-attached).
+- **VMGFx DSL `add ... in=<maskName>`** — when the named parent is a
+  `VMGMaskGroup`, the added Graphic is auto-tagged with
+  `VMGMaskClient`. The existing `in=` semantic for plain groups is
+  unchanged.
+
+### Notes
+
+- The VMG mask uses upper-nibble stencil bits so Unity's standard
+  `Mask` (depth IDs 1, 2, 4, 8) can coexist on the same canvas.
+- World renderer (`VectorSpriteRenderer`) is not stencil-masked this
+  round.
+- Soft / alpha-gradient mask, inverse mask, and nested VMG mask groups
+  are out of scope this round.
+
+## [0.40.0] - 2026-06-16
+
+HtmlCapture step 1 — reference render size. CSS animation demos
+authored against a specific viewport (often 100vw responsive) now
+preserve their authored pixel dimensions on the VMG side instead of
+landing at whatever the capture default happened to be.
+
+### Added
+
+- **`Tools/HtmlCapture/capture.js --viewport WxH`** — external CLI
+  flag selecting the reference viewport the demo should be captured
+  at. Default `400x400` (unchanged). Required for responsive demos
+  whose layout is driven by `vw/vh` percentages — capture them at the
+  size the author designed for, otherwise child element positions
+  scale unpredictably.
+- **`Tools/HtmlCapture/<out>/reference.json`** — sidecar written
+  alongside `frame_*.svg` / `frame_*.png` recording the captured
+  viewport, totalMs, sample points, and source filename. Forms the
+  base layer for future capture-pipeline metadata (keyframe stops,
+  per-element transforms).
+- **VMGFx DSL `add <name> svg asset=<id> referenceSize=auto`** — sizes
+  the host RectTransform to the bound `VMGShapeAsset`'s `viewBoxSize`
+  (which the SVG ScriptedImporter populates from the SVG's `viewBox`
+  attribute). An explicit `size=W,H` on the same statement still
+  wins. Recognized values: `auto`, `off`/`none`/`false` (no-op).
+
+### Changed
+
+- **`Samples~/HtmlCaptureWalkthrough/popup-ball.vmgfx`** —
+  `svgBall` now uses `referenceSize=auto`. Comment explains how to
+  recapture at the desired viewport to control imported size.
+
+## [0.39.0] - 2026-06-16
+
+`add svg asset=` DSL — VMGShapeAsset (already used by the
+`SvgAsset` slot on `VectorImageGraphic` / `VectorSpriteRenderer`) now
+spawns from VMGFx scripts the same way primitives do. Plus an
+external HtmlCapture tool for mining CSS animation demos.
+
+### Added
+
+- **VMGFx DSL `add <name> svg asset=<id>`** — spawns a renderer with
+  a `VMGShapeAsset` bound directly to its `SvgAsset` slot, bypassing
+  the procedural ShapeStack pipeline. The `asset(name)` parens form
+  is also accepted for consistency with `motionPath path=asset(...)`;
+  a bare name is the shorthand.
+- **`VMGFx.Svg()` factory** — code-API counterpart of the DSL form.
+  Returns a `VMGSvgDescriptor` whose `.Asset(VMGShapeAsset)` chain
+  method binds the asset.
+- **`VMGSvgDescriptor`** (in `VMGShapeDescriptors.cs`) — base
+  shape-descriptor extension whose `ApplyDescriptor` branch writes to
+  `g.SvgAsset` / `r.SvgAsset` and skips ShapeStack entirely. Size /
+  Position / Rotation from the descriptor still apply.
+- **`Tools/HtmlCapture/`** — external Playwright snapshot tool
+  (`capture.js`, ~210 LOC). Samples 7 progress points of any
+  HTML+CSS animation by pausing animations and shifting
+  `animation-delay`. Emits a PNG and a synthesized SVG (`<rect rx
+  fill transform>`) at each point. Not part of the package — zero
+  Node dependency in `com.ilsang.vmg`.
+- **`Assets/Samples/HtmlCaptureWalkthrough/`** — walkthrough proving
+  the end-to-end path on yui540's `popup-ball` demo (MIT). Includes
+  the source HTML, the synthesized SVG, the generated
+  `.vmgshape.asset`, the `.vmgfx` script driving both a primitive and
+  the SVG-backed shape, and a reference PNG.
+
+### Changed
+
+- **`VMGAnimatorEditor`** — the `Assets` list on `VMGAnimator` is now
+  drawn under the Script section (only when Script is set). It was
+  previously hidden by the custom editor, which made the asset
+  registry unusable. The list is also tooltipped to mention the
+  `add svg asset=...` consumer alongside the existing
+  `motionPath path=asset(...)` one.
+
 ## [0.38.0] - 2026-06-15
 
 SVG render-path perf — natural follow-up to 0.36.0's renderer

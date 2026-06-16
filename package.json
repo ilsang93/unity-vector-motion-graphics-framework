@@ -1,6 +1,6 @@
 {
   "name": "com.ilsang.vmg",
-  "version": "0.39.0",
+  "version": "0.41.0",
   "displayName": "Ilsang VMG - Vector Motion Graphics Framework",
   "description": "Procedural vector motion graphics runtime for Unity. AE-style shape layers (path/stroke/fill/trim/round corner) with full Animator/Timeline integration for both UGUI and world-space rendering.",
   "unity": "6000.3",

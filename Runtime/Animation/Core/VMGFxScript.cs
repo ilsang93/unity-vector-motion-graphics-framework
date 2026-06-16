@@ -6,6 +6,7 @@ using UnityEngine;
 using VMG.Animation;
 using VMG.Core;
 using VMG.Svg;
+using VMG.UI;
 
 namespace VMG.Animation.Core
 {
@@ -16,6 +17,7 @@ namespace VMG.Animation.Core
     // Statement keywords:
     //   add <name> <shape> [key=value ...]
     //   group <name> { ... }
+    //   mask <name> { ... }              (stencil-mask group; see VMGMaskGroup)
     //   animate <target> <path> -> <value> [key=value ...]
     //   timeline { ... }
     //     - inside timeline: animate / set / call / label, all sequenced
@@ -289,6 +291,17 @@ namespace VMG.Animation.Core
             public List<Stmt> children = new List<Stmt>();
         }
 
+        // Stencil-mask group. Same shape as GroupStmt — a named container
+        // with child statements — but the apply step also attaches
+        // VMGMaskGroup to the container GameObject and VMGMaskSource to
+        // each child Graphic. Children added later via `in=<maskName>`
+        // (handled by ApplyAdd) get VMGMaskClient instead.
+        internal sealed class MaskStmt : Stmt
+        {
+            public string name;
+            public List<Stmt> children = new List<Stmt>();
+        }
+
         internal sealed class AnimateStmt : Stmt
         {
             public string target;
@@ -449,6 +462,7 @@ namespace VMG.Animation.Core
                 {
                     case "add": return ParseAdd(p);
                     case "group": return ParseGroup(p);
+                    case "mask": return ParseMask(p);
                     case "animate": return ParseAnimate(p);
                     case "motionPath": return ParseMotionPath(p);
                     case "timeline": return ParseTimeline(p);
@@ -494,6 +508,27 @@ namespace VMG.Animation.Core
                 p.ExpectSymbol("}");
                 p.EndStatement();
                 return new GroupStmt { line = line, name = name, children = children };
+            }
+
+            static MaskStmt ParseMask(ParseState p)
+            {
+                int line = p.Peek().line;
+                p.Consume(); // 'mask'
+                string name = p.ExpectIdent("mask name");
+                p.ExpectSymbol("{");
+                var children = new List<Stmt>();
+                p.SkipNewlines();
+                while (!p.AtEnd)
+                {
+                    var t = p.Peek();
+                    if (t.kind == TokKind.Symbol && t.text == "}") break;
+                    var c = ParseStatement(p, insideTimeline: false);
+                    if (c != null) children.Add(c);
+                    p.SkipNewlines();
+                }
+                p.ExpectSymbol("}");
+                p.EndStatement();
+                return new MaskStmt { line = line, name = name, children = children };
             }
 
             static AnimateStmt ParseAnimate(ParseState p)
@@ -831,10 +866,11 @@ namespace VMG.Animation.Core
                 var scene = VMGFx.Scene(root);
                 compiled.scene = scene;
 
-                // Pass 1: hierarchy (add / group).
+                // Pass 1: hierarchy (add / group / mask).
                 foreach (var s in statements)
                 {
                     if (s is AddStmt addS) ApplyAdd(addS, scene, compiled);
+                    else if (s is MaskStmt maskS) ApplyMask(maskS, scene, compiled);
                     else if (s is GroupStmt grpS) ApplyGroup(grpS, scene, compiled);
                 }
 
@@ -1265,7 +1301,71 @@ namespace VMG.Animation.Core
                 var d = MakeDescriptor(s.shape, s.attrs, compiled);
                 if (d == null) return;
                 ApplyDescriptorAttrs(d, s.attrs);
-                scene.Add(s.name, d);
+                // `in=<parent>` re-roots this Add under an earlier child,
+                // forming a parent-child chain. The parent must have been
+                // added earlier in the same script — order matters here,
+                // matching the top-down read flow of the .vmgfx file.
+                var target = scene;
+                bool intoMask = false;
+                if (s.attrs != null && s.attrs.TryGetValue("in", out var parentName) && !string.IsNullOrEmpty(parentName))
+                {
+                    try { target = scene.ChildScene(parentName.Trim()); }
+                    catch (System.InvalidOperationException ex)
+                    {
+                        Debug.LogError($"[VMGFx] add '{s.name}' in={parentName}: {ex.Message}");
+                        return;
+                    }
+                    // If the parent is a stencil mask group, the added
+                    // graphic becomes a mask CLIENT (visible only inside
+                    // the union of the group's sources) rather than a
+                    // plain nested child.
+                    intoMask = target.Root != null && target.Root.GetComponent<VMGMaskGroup>() != null;
+                }
+                target.Add(s.name, d);
+                if (intoMask)
+                {
+                    var child = target[s.name];
+                    if (child is UnityEngine.UI.Graphic)
+                    {
+                        if (child.gameObject.GetComponent<VMGMaskClient>() == null)
+                            child.gameObject.AddComponent<VMGMaskClient>();
+                    }
+                }
+            }
+
+            static void ApplyMask(MaskStmt s, VMGScene scene, VMGFxCompiled compiled)
+            {
+                scene.Group(s.name, sub =>
+                {
+                    // Attach the group marker BEFORE iterating children so
+                    // ApplyAdd's mask-client detection works for any nested
+                    // `in=<this-mask>` references inside the block (not the
+                    // common case, but supported).
+                    if (sub.Root != null && sub.Root.GetComponent<VMGMaskGroup>() == null)
+                        sub.Root.gameObject.AddComponent<VMGMaskGroup>();
+
+                    foreach (var c in s.children)
+                    {
+                        if (c is AddStmt addS) ApplyAdd(addS, sub, compiled);
+                        else if (c is MaskStmt maskS) ApplyMask(maskS, sub, compiled);
+                        else if (c is GroupStmt grpS) ApplyGroup(grpS, sub, compiled);
+                    }
+
+                    // After children are materialised, tag each direct-child
+                    // Graphic as a mask SOURCE. Children created via
+                    // `add` show up under sub.Root as the immediate
+                    // descendants.
+                    var root = sub.Root;
+                    if (root != null)
+                    {
+                        for (int i = 0; i < root.childCount; i++)
+                        {
+                            var g = root.GetChild(i).GetComponent<UnityEngine.UI.Graphic>();
+                            if (g != null && g.GetComponent<VMGMaskSource>() == null)
+                                g.gameObject.AddComponent<VMGMaskSource>();
+                        }
+                    }
+                });
             }
 
             static void ApplyGroup(GroupStmt s, VMGScene scene, VMGFxCompiled compiled)
@@ -1275,6 +1375,7 @@ namespace VMG.Animation.Core
                     foreach (var c in s.children)
                     {
                         if (c is AddStmt addS) ApplyAdd(addS, sub, compiled);
+                        else if (c is MaskStmt maskS) ApplyMask(maskS, sub, compiled);
                         else if (c is GroupStmt grpS) ApplyGroup(grpS, sub, compiled);
                     }
                 });
@@ -1332,12 +1433,16 @@ namespace VMG.Animation.Core
                     }
                     case "svg":
                     {
-                        // `add <name> svg asset=<name>` — bind a VMGShapeAsset
-                        // registered on the VMGAnimator (or its `assets`
-                        // dictionary) to the spawned renderer's SvgAsset slot.
-                        // The asset= attr accepts the same asset(name) form
-                        // as motionPath path=asset(name) for consistency, and
-                        // a bare name as shorthand.
+                        // `add <name> svg asset=<name> [referenceSize=auto]` —
+                        // bind a VMGShapeAsset registered on the VMGAnimator
+                        // (or its `assets` dictionary) to the spawned
+                        // renderer's SvgAsset slot. The asset= attr accepts
+                        // the same asset(name) form as motionPath
+                        // path=asset(name) for consistency, and a bare name
+                        // as shorthand. referenceSize=auto sizes the host
+                        // RectTransform to the asset's SVG viewBox so demos
+                        // captured at a known viewport (HtmlCapture --viewport
+                        // WxH) come in at their authored pixel dimensions.
                         var d = VMGFx.Svg();
                         if (attrs == null || !attrs.TryGetValue("asset", out var raw))
                         {
@@ -1372,6 +1477,22 @@ namespace VMG.Animation.Core
                             return null;
                         }
                         d.Asset(svgAsset);
+                        // referenceSize=auto pulls the captured viewBox onto
+                        // the descriptor's Size BEFORE ApplyDescriptorAttrs
+                        // runs, so an explicit size= in the same stmt still
+                        // wins (Apply iterates attrs and overwrites).
+                        if (attrs.TryGetValue("referenceSize", out var refMode))
+                        {
+                            var mode = (refMode ?? "").Trim().ToLowerInvariant();
+                            if (mode == "auto")
+                            {
+                                ApplySize(d, svgAsset.viewBoxSize);
+                            }
+                            else if (mode != "" && mode != "off" && mode != "none" && mode != "false")
+                            {
+                                Debug.LogWarning($"[VMGFx] add svg referenceSize='{refMode}' not recognized (expected 'auto' or 'off')");
+                            }
+                        }
                         return d;
                     }
                 }
@@ -1401,6 +1522,26 @@ namespace VMG.Animation.Core
                         case "rotation":
                         {
                             if (TryParseFloat(kv.Value, out var f)) ApplyRotation(d, f);
+                            break;
+                        }
+                        case "pivot":
+                        {
+                            // RectTransform pivot in 0..1 (CSS transform-origin
+                            // equivalent for the rotation anchor). Single-value
+                            // form `pivot=0.5` sets both axes.
+                            if (TryParseVector2(kv.Value, out var v)) ApplyPivot(d, v);
+                            else if (TryParseFloat(kv.Value, out var f)) ApplyPivot(d, new Vector2(f, f));
+                            break;
+                        }
+                        case "anchor":
+                        {
+                            // Single-point anchor (anchorMin == anchorMax).
+                            // Lets the rect attach to one spot in the parent's
+                            // frame — e.g. anchor=0.5,0 pins to the parent's
+                            // bottom-center, so sibling growth shifts this
+                            // rect along the parent's bottom edge.
+                            if (TryParseVector2(kv.Value, out var v)) ApplyAnchor(d, v);
+                            else if (TryParseFloat(kv.Value, out var f)) ApplyAnchor(d, new Vector2(f, f));
                             break;
                         }
                         case "fill":
@@ -1441,6 +1582,9 @@ namespace VMG.Animation.Core
                         case "points":
                         case "closed":
                         case "asset":
+                        case "referenceSize":
+                        // handled in ApplyAdd, not here:
+                        case "in":
                             break;
                         default:
                             Debug.LogWarning($"[VMGFx] unknown add attribute '{kv.Key}'");
@@ -1460,6 +1604,8 @@ namespace VMG.Animation.Core
             }
             static void ApplyPosition(VMGShapeDescriptor d, Vector2 v) { d.m_Position = v; d.m_HasPosition = true; }
             static void ApplyRotation(VMGShapeDescriptor d, float deg) { d.m_RotationDeg = deg; d.m_HasRotation = true; }
+            static void ApplyPivot(VMGShapeDescriptor d, Vector2 v) { d.m_Pivot = v; d.m_HasPivot = true; }
+            static void ApplyAnchor(VMGShapeDescriptor d, Vector2 v) { d.m_Anchor = v; d.m_HasAnchor = true; }
             static void ApplyFill(VMGShapeDescriptor d, Color c)
             {
                 d.m_Fill.enabled = true;

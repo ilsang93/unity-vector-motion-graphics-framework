@@ -25,6 +25,10 @@ namespace VMG.Animation.Core
         internal bool m_HasPosition;
         internal float m_RotationDeg;
         internal bool m_HasRotation;
+        internal Vector2 m_Pivot = new Vector2(0.5f, 0.5f);
+        internal bool m_HasPivot;
+        internal Vector2 m_Anchor = new Vector2(0.5f, 0.5f);
+        internal bool m_HasAnchor;
         internal bool m_FitToRect = true;
         internal bool m_HasFitToRect;
 
@@ -108,6 +112,42 @@ namespace VMG.Animation.Core
         {
             m_RotationDeg = degrees;
             m_HasRotation = true;
+            return Self;
+        }
+
+        // RectTransform pivot in 0..1 space. (0,0) is bottom-left, (1,1) is
+        // top-right, (0.5, 0.5) is center (the default). Mirrors CSS
+        // transform-origin when used to set the rotation anchor of a shape.
+        public TSelf Pivot(float x, float y)
+        {
+            m_Pivot = new Vector2(x, y);
+            m_HasPivot = true;
+            return Self;
+        }
+
+        public TSelf Pivot(Vector2 p)
+        {
+            m_Pivot = p;
+            m_HasPivot = true;
+            return Self;
+        }
+
+        // RectTransform anchor — same point for anchorMin and anchorMax, so
+        // the rect occupies a zero-width/zero-height slot at (x, y) inside
+        // its parent's 0..1 frame. Authoring two separate anchors is left
+        // out: this single-point form is what makes parent-edge attachment
+        // (CSS-style stacking) ergonomic from a flat .vmgfx.
+        public TSelf Anchor(float x, float y)
+        {
+            m_Anchor = new Vector2(x, y);
+            m_HasAnchor = true;
+            return Self;
+        }
+
+        public TSelf Anchor(Vector2 a)
+        {
+            m_Anchor = a;
+            m_HasAnchor = true;
             return Self;
         }
 

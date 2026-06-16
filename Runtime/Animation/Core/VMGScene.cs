@@ -89,6 +89,23 @@ namespace VMG.Animation.Core
             return this;
         }
 
+        // Return (and lazily create) a sub-scene whose root is an existing
+        // child added via Add(). This is the hook that `add ... in=parent`
+        // in .vmgfx uses to nest one shape under another, letting the child
+        // ride the parent's transform/sizeDelta chain (CSS-like cascade).
+        // Throws if `name` hasn't been added yet, since asking for a parent
+        // that doesn't exist is a script ordering bug worth surfacing.
+        internal VMGScene ChildScene(string name)
+        {
+            if (string.IsNullOrEmpty(name)) throw new ArgumentException("name required", nameof(name));
+            if (m_Groups.TryGetValue(name, out var sub) && sub != null && sub.m_Root != null) return sub;
+            if (!m_Children.TryGetValue(name, out var c) || c == null)
+                throw new InvalidOperationException($"VMGScene: no child '{name}' to nest into. Add the parent before referencing it via in=.");
+            sub = new VMGScene(c.transform);
+            m_Groups[name] = sub;
+            return sub;
+        }
+
         // Nest a sub-scene under a named child Transform. The lambda receives
         // a VMGScene whose root is the group GameObject. Re-running with the
         // same name reuses the existing group; children inside follow the
@@ -200,6 +217,12 @@ namespace VMG.Animation.Core
             var rt = go.transform as RectTransform;
             if (rt != null)
             {
+                // Pivot and anchor both affect how sizeDelta / anchoredPosition
+                // resolve, so apply them first. Only when the descriptor
+                // explicitly set one — scripts that don't mention these keep
+                // the RectTransform's authored values (typically 0.5, 0.5).
+                if (d.m_HasPivot) rt.pivot = d.m_Pivot;
+                if (d.m_HasAnchor) { rt.anchorMin = d.m_Anchor; rt.anchorMax = d.m_Anchor; }
                 rt.sizeDelta = d.m_Size;
                 rt.anchoredPosition = d.m_Position;
             }

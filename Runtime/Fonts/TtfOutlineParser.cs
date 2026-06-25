@@ -5,23 +5,26 @@ using VMG.Core;
 
 namespace VMG.Fonts
 {
-    /// Parses TrueType (`glyf`) outlines from raw TTF/OTF font bytes into
-    /// VMG VectorNode contours. This is the SHAPE source for vector text:
-    /// TMP gives us glyph PLACEMENT, this gives us glyph SHAPE.
+    /// Parses glyph outlines from raw TTF/OTF font bytes into VMG VectorNode
+    /// contours. This is the SHAPE source for vector text: TMP gives us
+    /// glyph PLACEMENT, this gives us glyph SHAPE.
     ///
-    /// Scope (v1): TrueType outlines (`glyf`/`loca` tables) only —
-    /// quadratic beziers, simple + composite glyphs, cmap formats 4 & 12.
-    /// OpenType-CFF (`CFF ` cubic CharStrings) is NOT handled yet; callers
-    /// should check HasGlyfOutlines and surface a clear message otherwise.
+    /// Outline sources, in priority order:
+    ///  • TrueType `glyf`/`loca` (quadratic beziers, simple + composite) —
+    ///    parsed here directly.
+    ///  • OpenType-CFF `CFF ` (Type 2 cubic CharStrings, incl. CID-keyed) —
+    ///    delegated to CffOutlineParser.
+    /// cmap formats 4 & 12 cover unicode->glyph for both.
     ///
-    /// Construct once per font (parses the table directory + cmap eagerly),
-    /// then call GetGlyph(unicode) repeatedly. Not thread-safe; reuses an
-    /// internal point buffer.
+    /// HasOutlines is true when EITHER source is usable; HasGlyfOutlines /
+    /// HasCffOutlines say which one. Construct once per font (parses the
+    /// table directory + cmap eagerly), then call GetGlyph(unicode)
+    /// repeatedly. Not thread-safe; reuses internal point buffers.
     public sealed class TtfOutlineParser
     {
         // ---- table offsets (0 = absent) ----
         private readonly byte[] m_Data;
-        private int m_HeadOff, m_MaxpOff, m_CmapOff, m_LocaOff, m_GlyfOff, m_HheaOff, m_HmtxOff;
+        private int m_HeadOff, m_MaxpOff, m_CmapOff, m_LocaOff, m_GlyfOff, m_HheaOff, m_HmtxOff, m_CffOff;
 
         private int m_UnitsPerEm = 1000;
         private bool m_LongLoca;          // head.indexToLocFormat == 1
@@ -31,9 +34,18 @@ namespace VMG.Fonts
         // cmap: unicode -> glyph index, lazily resolved through the selected subtable.
         private CmapSubtable m_Cmap;
 
+        // CFF outline interpreter, built when the font carries a `CFF ` table
+        // (OpenType-PostScript) instead of TrueType `glyf`.
+        private CffOutlineParser m_Cff;
+
         /// True when the font carries TrueType `glyf` outlines we can parse.
-        /// False for CFF-only OpenType fonts (.otf with PostScript outlines).
         public bool HasGlyfOutlines { get; private set; }
+
+        /// True when the font carries OpenType-CFF (`CFF `) outlines we can parse.
+        public bool HasCffOutlines => m_Cff != null;
+
+        /// True when either outline source is usable.
+        public bool HasOutlines => HasGlyfOutlines || HasCffOutlines;
 
         public int UnitsPerEm => m_UnitsPerEm;
         public int NumGlyphs => m_NumGlyphs;
@@ -44,12 +56,28 @@ namespace VMG.Fonts
                 throw new ArgumentException("Font bytes are null or too short.");
             m_Data = fontBytes;
             ParseTableDirectory();
-            if (HasGlyfOutlines)
+
+            // head/maxp/hhea/cmap are shared by both outline kinds, so parse
+            // them whenever ANY outline table is present.
+            bool anyOutline = HasGlyfOutlines || m_CffOff != 0;
+            if (anyOutline)
             {
-                ParseHead();
-                ParseMaxp();
+                if (m_HeadOff != 0) ParseHead();
+                if (m_MaxpOff != 0) ParseMaxp();
                 ParseHhea();
                 m_Cmap = ParseCmap();
+            }
+
+            // Prefer glyf when both exist (rare). Otherwise try CFF; if it
+            // fails to parse we simply stay outline-less.
+            if (!HasGlyfOutlines && m_CffOff != 0)
+            {
+                try
+                {
+                    var cff = new CffOutlineParser(m_Data, m_CffOff, m_UnitsPerEm);
+                    if (cff.IsUsable) m_Cff = cff;
+                }
+                catch { m_Cff = null; }
             }
         }
 
@@ -66,20 +94,21 @@ namespace VMG.Fonts
 
         /// Parses the outline for a unicode code point. Returns a
         /// GlyphContour (possibly empty for whitespace) or null if the font
-        /// has no glyf outlines.
+        /// has no usable outlines.
         public GlyphContour GetGlyph(int unicode)
         {
-            if (!HasGlyfOutlines) return null;
+            if (!HasOutlines) return null;
             int gid = GetGlyphIndex(unicode);
             return GetGlyphByIndex(gid);
         }
 
         public GlyphContour GetGlyphByIndex(int glyphIndex)
         {
-            if (!HasGlyfOutlines) return null;
+            if (!HasOutlines) return null;
             var result = new GlyphContour { unitsPerEm = m_UnitsPerEm };
             (result.advanceWidth, result.leftSideBearing) = GetHMetrics(glyphIndex);
-            BuildGlyf(glyphIndex, result.contours, 0);
+            if (HasGlyfOutlines) BuildGlyf(glyphIndex, result.contours, 0);
+            else m_Cff.BuildGlyph(glyphIndex, result.contours);
             return result;
         }
 
@@ -108,7 +137,9 @@ namespace VMG.Fonts
                 ReadTables(tableStart, numTables);
             }
 
-            // glyf+loca present => TrueType outlines. 'OTTO'/CFF => not yet.
+            // glyf+loca present => TrueType outlines. A `CFF ` table (often
+            // with the 'OTTO' sfnt tag) => OpenType-PostScript, handled by
+            // CffOutlineParser below.
             HasGlyfOutlines = m_GlyfOff != 0 && m_LocaOff != 0 && m_HeadOff != 0 && m_MaxpOff != 0;
         }
 
@@ -128,6 +159,7 @@ namespace VMG.Fonts
                     case 0x676C7966: m_GlyfOff = off; break; // 'glyf'
                     case 0x68686561: m_HheaOff = off; break; // 'hhea'
                     case 0x686D7478: m_HmtxOff = off; break; // 'hmtx'
+                    case 0x43464620: m_CffOff = off; break;  // 'CFF '
                 }
             }
         }

@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.44.0] - 2026-06-26
+
+**OpenType-CFF (`.otf`) font support for Vector Text** + a **material slot
+on the Canvas variant**.
+
+### Added
+
+- **CFF / OpenType-PostScript outline parsing.** `Vector Text (UI/World,
+  TMP)` previously only rendered TrueType (`glyf`) fonts; OpenType-CFF
+  `.otf` fonts (including most Korean/CJK fonts, which are typically
+  CID-keyed) failed with *"no TrueType glyf outlines."* A new
+  `CffOutlineParser` interprets Type 2 CharStrings — full path operator
+  set (moveto/lineto/curve families incl. vv/hh/vh/hv + flex), local +
+  global subrs with the standard bias, and CID-keyed fonts via
+  FDArray/FDSelect (per-glyph Private DICT + local subrs). CFF curves are
+  already cubic, so they map 1:1 to VMG nodes. `.otf` and `.ttf` now both
+  "just work"; the font is auto-detected.
+- **`Material` field on `Vector Text (UI, TMP)`.** The Canvas variant now
+  exposes a material slot (mirroring the World variant), pushed onto the
+  companion `CanvasRenderer` graphic. Leave it empty for the default
+  `VMG/UI/VectorSDF` (zoom-independent edge AA); assign any UI material to
+  skin the text mesh like an image (e.g. a gradient or texture shader).
+  Note: a non-SDF custom material renders without the SDF edge AA — base
+  it on `VMG/UI/VectorSDF` to keep both.
+
+### Changed
+
+- `TtfOutlineParser` now exposes `HasOutlines` (either source usable),
+  `HasCffOutlines`, alongside the existing `HasGlyfOutlines`.
+  `GlyphOutlineProvider.FromBytes` accepts CFF fonts. The "unusable font"
+  warning now only fires for genuinely unparseable fonts (bitmap-only or
+  corrupt), not for `.otf`.
+
 ## [0.43.0] - 2026-06-25
 
 **Vector Text (TMP)** — render TextMeshPro text as true VMG vector

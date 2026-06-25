@@ -120,7 +120,7 @@ namespace VMG.Text
             var provider = ResolveProvider(t);
             if (provider == null || !provider.IsUsable)
             {
-                // No usable outlines (CFF .otf, missing font bytes, etc.).
+                // No usable outlines (bitmap-only font, missing font bytes, etc.).
                 m_Shape = null;
                 return false;
             }
@@ -435,9 +435,9 @@ namespace VMG.Text
             catch { return false; }
             if (bytes == null || bytes.Length == 0) return false;
 
-            // Validate the bytes actually yield TrueType outlines before
-            // embedding, so baking a CFF .otf fails loudly instead of shipping
-            // dead weight that renders nothing.
+            // Validate the bytes actually yield parseable outlines (TrueType
+            // `glyf` OR OpenType-CFF) before embedding, so baking a font we
+            // can't render fails loudly instead of shipping dead weight.
             if (GlyphOutlineProvider.FromBytes(bytes) == null) return false;
 
             m_FontBytes = bytes;
@@ -502,8 +502,9 @@ namespace VMG.Text
             if (ReferenceEquals(m_WarnedUnusable, fa)) return;
             m_WarnedUnusable = fa;
             Debug.LogWarning(
-                $"[VMGVectorText] Font '{(fa != null ? fa.name : "null")}' has no TrueType glyf outlines " +
-                "(CFF/OpenType-CFF .otf is not supported in v1). Use a TrueType (.ttf) font.", this);
+                $"[VMGVectorText] Font '{(fa != null ? fa.name : "null")}' has no parseable vector outlines " +
+                "(neither TrueType `glyf` nor OpenType-CFF `CFF `). Bitmap-only or unsupported font; " +
+                "use a standard .ttf or .otf font.", this);
         }
     }
 }

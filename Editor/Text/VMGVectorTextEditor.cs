@@ -108,8 +108,8 @@ namespace VMG.EditorTools
                         else
                         {
                             Debug.LogWarning(
-                                $"[VMGVectorText] Bake failed on '{c.name}': no resolvable TrueType (.ttf) " +
-                                "source for its TMP font. CFF/OpenType-CFF (.otf) is not supported in v1.", c);
+                                $"[VMGVectorText] Bake failed on '{c.name}': could not resolve a parseable " +
+                                "source font (.ttf/.otf) for its TMP font, or the font has no vector outlines.", c);
                         }
                     }
                 }

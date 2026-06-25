@@ -15,18 +15,19 @@ namespace VMG.Fonts
         private readonly TtfOutlineParser m_Parser;
         private readonly Dictionary<int, GlyphContour> m_ByGid = new Dictionary<int, GlyphContour>(128);
 
-        public bool IsUsable => m_Parser != null && m_Parser.HasGlyfOutlines;
+        public bool IsUsable => m_Parser != null && m_Parser.HasOutlines;
         public int UnitsPerEm => m_Parser != null ? m_Parser.UnitsPerEm : 1000;
 
-        /// Builds a provider from font bytes. Returns null if the bytes are
-        /// not a parseable TrueType-outline font (e.g. CFF-only .otf).
+        /// Builds a provider from font bytes. Returns null only if the bytes
+        /// have no usable outlines at all — both TrueType (`glyf`) and
+        /// OpenType-CFF (`CFF `) are supported.
         public static GlyphOutlineProvider FromBytes(byte[] fontBytes)
         {
             if (fontBytes == null || fontBytes.Length < 12) return null;
             TtfOutlineParser parser;
             try { parser = new TtfOutlineParser(fontBytes); }
             catch { return null; }
-            if (!parser.HasGlyfOutlines) return null;
+            if (!parser.HasOutlines) return null;
             return new GlyphOutlineProvider(parser);
         }
 

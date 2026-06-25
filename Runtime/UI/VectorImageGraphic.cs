@@ -20,6 +20,8 @@ namespace VMG.UI
         public FillStyle Fill = new FillStyle { enabled = true, color = Color.white };
         public RoundCornerModifier RoundCorners = RoundCornerModifier.Default();
         public TrimPathModifier Trim = TrimPathModifier.Default();
+        [Tooltip("AE-style wiggle: time-varying Perlin shake of every path node. Rebuilds every frame while enabled. Keyframable (intensity / frequency / seed).")]
+        public WiggleModifier Wiggle = WiggleModifier.Default();
         [Tooltip("Stretch the shape to fill the RectTransform. When true, ShapeStack slot center/size channels are overwritten every frame from the RectTransform — animate RectTransform.sizeDelta instead. Keyframable.")]
         public bool FitToRect = true;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Object reference: NOT keyframable from AnimationClip — swap via script.")]
@@ -39,6 +41,7 @@ namespace VMG.UI
         private FillStyle m_PrevFill;
         private RoundCornerModifier m_PrevRound;
         private TrimPathModifier m_PrevTrim;
+        private WiggleModifier m_PrevWiggle;
         private Color m_PrevGraphicColor;
         private bool m_PrevFitToRect;
         private VMGShapeAsset m_PrevSvgAsset;
@@ -123,9 +126,24 @@ namespace VMG.UI
             if (IsMeshInputDirty()) SetVerticesDirty();
         }
 
+        // Edit-mode-safe clock for wiggle: Time.time only advances in Play,
+        // so use the editor wall clock when not playing so wiggle previews
+        // live in the scene/game view at author time.
+        private static float WiggleTime()
+        {
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                return (float)UnityEditor.EditorApplication.timeSinceStartup;
+#endif
+            return Time.time;
+        }
+
         bool IsMeshInputDirty()
         {
             if (!m_HasSnapshot) return true;
+            // Wiggle is time-driven: rebuild every frame while it's active so
+            // the shake animates. Defeats the value-equality gate by design.
+            if (Wiggle.Enabled) return true;
             // FitToRect overwrites ShapeStack slots from rectTransform.rect
             // on every OnPopulateMesh. Parent Canvas resizes, anchor
             // changes, scaler updates and layout-group fixups can shift
@@ -149,6 +167,7 @@ namespace VMG.UI
             if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
             if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
             if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
+            if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
             return false;
         }
 
@@ -159,6 +178,7 @@ namespace VMG.UI
             m_PrevFill = Fill;
             m_PrevRound = RoundCorners;
             m_PrevTrim = Trim;
+            m_PrevWiggle = Wiggle;
             m_PrevGraphicColor = color;
             m_PrevFitToRect = FitToRect;
             m_PrevSvgAsset = SvgAsset;
@@ -205,17 +225,20 @@ namespace VMG.UI
                 ShapeStack.Slot3.shape.center = r.center; ShapeStack.Slot3.shape.size = r.size;
             }
 
-            // Pipeline: ShapeStack -> RoundCorner -> Trim. Fill skips
-            // Trim so the closed shape survives the slice.
+            // Pipeline: ShapeStack -> RoundCorner -> Wiggle -> Trim. Fill
+            // skips Trim so the closed shape survives the slice.
             //
             // Direct calls (not an IPathModifier list) so the struct
             // modifiers don't get boxed every frame.
+
+            float wiggleTime = WiggleTime();
 
             // Fill pipeline.
             m_Pipeline.workingPath.Clear();
             m_Pipeline.mesh.Clear();
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
             if (Fill.enabled)
             {
                 var fill = Fill;
@@ -228,6 +251,7 @@ namespace VMG.UI
             m_Pipeline.workingPath.Clear();
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
             if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
             if (Stroke.enabled)
             {
@@ -236,9 +260,22 @@ namespace VMG.UI
                 StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
+            // Gradient bake: recolor fill/stroke verts across the renderer's
+            // union bounds (so both gradients share one coordinate frame),
+            // multiplied by Graphic.color tint. Runs before UV normalization
+            // since ApplyGradient reads each vertex's original position from
+            // its UV placeholder. The same bounds double as the texture UV
+            // rect when FitToRect is off, so only compute them once.
+            bool fillGrad = Fill.enabled && Fill.useGradient;
+            bool strokeGrad = Stroke.enabled && Stroke.useGradient;
+            bool needBounds = fillGrad || strokeGrad || !FitToRect;
+            Rect gradBounds = needBounds ? VertexUnionBounds(m_Pipeline.mesh, m_StrokeBuf) : default;
+            if (fillGrad) m_Pipeline.mesh.ApplyGradient(Fill.gradient, gradBounds, color, 0);
+            if (strokeGrad) m_StrokeBuf.ApplyGradient(Stroke.gradient, gradBounds, color, 0);
+
             // Normalize UVs across the union of fill + stroke so a texture
             // lays continuously over the whole renderer.
-            Rect uvRect = FitToRect ? rectTransform.rect : VertexUnionBounds(m_Pipeline.mesh, m_StrokeBuf);
+            Rect uvRect = FitToRect ? rectTransform.rect : gradBounds;
             m_Pipeline.mesh.NormalizeUVsToRect(uvRect);
             m_StrokeBuf.NormalizeUVsToRect(uvRect);
 

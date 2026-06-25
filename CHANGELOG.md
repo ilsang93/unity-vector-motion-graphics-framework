@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.42.0] - 2026-06-25
+
+Two AE-inspired authoring features: gradient paint for fill/stroke,
+and a Wiggle modifier that shakes the path over time.
+
+### Added
+
+- **Two-stop gradients on fill and stroke.** `FillStyle` and
+  `StrokeStyle` gain `useGradient` (bool) + `gradient` (`VMGGradient`).
+  `VMGGradient` is a keyframable struct: `type` (Linear / Radial),
+  `colorA`, `colorB`, `angle` (degrees; 0 = +X / left→right, 90 = +Y /
+  bottom→top, matching CSS angle semantics in math convention). The
+  gradient is baked **per-vertex on the CPU** (no shader change, fully
+  keyframable, the dirty-flag still gates idle rebuilds) and mapped
+  across the renderer's fill+stroke **union bounds** so fill and stroke
+  gradients share one coordinate frame. The renderer tint
+  (`Graphic.color` / `Tint`) multiplies the gradient. Linear projects
+  each vertex onto the angle axis; Radial uses distance from the bounds
+  center over the half-diagonal. Works in depth-extruded World mode too
+  (mapped across the 2D silhouette). When `useGradient` is off the solid
+  `color` fast path is unchanged.
+- **`WiggleModifier` — After Effects-style line wiggle.** New struct
+  modifier (`Wiggle` field on both renderers) that adds a smooth,
+  irregular, time-varying ripple along the outline. Two design points
+  that distinguish it from a naive per-node jitter:
+  - **Wiggles the line, not just the shape.** The path is first
+    resampled to a dense, even arc-length spacing (`spacing`), so a
+    low-node shape (a rectangle, a rounded rect) ripples *along its
+    edges* instead of sloshing around as a whole. `spacing` is the
+    ripple resolution; `spacing = 0` keeps the authored nodes for the
+    old whole-shape wiggle.
+  - **No spikes.** The displacement is read from a noise field keyed by
+    each point's **cumulative arc length**, so adjacent points move
+    together and the outline stays smooth — no sharp kinks from
+    neighbours lurching in opposite directions. `spatialScale` is the
+    noise wavelength (large = broad undulation, small = fine chop;
+    clamped to a floor so it can't reintroduce spikes). Closed paths
+    sample the field around a circle so it wraps seamlessly with no seam
+    at the start node.
+
+  Knobs: `intensity` (amplitude), `frequency` (Hz), `spacing`,
+  `spatialScale`, `seed` (desync between shapes). All keyframable.
+  While enabled the renderer rebuilds every frame (the value-equality
+  dirty-flag is bypassed by design); disabled or `intensity == 0`
+  returns to the gated fast path. Edit-mode preview uses the editor
+  wall clock so the wiggle animates at author time.
+- **DSL support.** `add` statements accept:
+  - `fill=linear-gradient(45,#fff,#000)` / `fill=radial-gradient(#fff,#000)`
+    / `fill=gradient(#fff,#000)` (alias for linear @ 0°). The leading
+    angle is optional for linear.
+  - `stroke=linear-gradient(45,#fff,#000),<width>` — the gradient's
+    inner commas are kept together by a paren-aware split; width is the
+    last token.
+  - `wiggle=intensity[,frequency[,seed]]` (e.g. `wiggle=5,3`).
+
+### Notes
+
+- The CSS `@keyframes` importer still emits a single-color fallback for
+  CSS `linear-gradient()` values; wiring it through to the new
+  `VMGGradient` is a separate follow-up.
+
 ## [0.41.2] - 2026-06-17
 
 ### Fixed

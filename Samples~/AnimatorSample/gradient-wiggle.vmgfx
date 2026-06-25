@@ -1,0 +1,38 @@
+// gradient-wiggle.vmgfx — showcases the 0.42.0 additions:
+//   * fill / stroke gradients (linear + radial)
+//   * AE-style Wiggle path shake
+//
+// Drop on a UI Canvas GameObject with a VMGAnimator
+// (Mode = Internal, Script = this asset). Enable loopScript so the
+// breathing tween repeats; the wiggle animates on its own every frame.
+
+// ---- Linear-gradient backdrop card ----
+// Angle 90 = bottom→top. colorA at t=0 (bottom), colorB at t=1 (top).
+add card roundedRect size=320,180 cornerRadius=18 fill=linear-gradient(90,#10141c,#2a3550) stroke=#3a4660,2
+
+// ---- Radial-gradient headline bar ----
+add headline rect size=180,18 fill=radial-gradient(#5ee0ff,#1b4a6b) position=0,28
+
+// ---- Gradient-stroked ring (stroke gradient: color list, then width) ----
+add ring circle size=70 fill=none stroke=linear-gradient(0,#ff5ea8,#ffd166),6 position=0,-30
+
+// ---- Wiggling LINE, not a wiggling shape ----
+// wiggle = intensity, frequency[, seed]. The path is resampled to a dense
+// spacing first, so even this rounded rect ripples ALONG its edges instead
+// of just sloshing as a whole. Spacing / spatialScale (ripple resolution /
+// wavelength) default to a smooth line wiggle; tune them in the inspector.
+add wline roundedRect size=120,60 cornerRadius=10 fill=none stroke=#a0ffd6,4 position=-110,-30 wiggle=4,3
+
+// A second one, stronger + faster + a different seed so it ripples
+// independently. Few authored nodes, yet the whole outline shimmers.
+add wline2 rect size=120,60 fill=none stroke=#ffd166,4 position=110,-30 wiggle=6,6,7
+
+// =====================================================================
+// MAIN TIMELINE — gentle entrance, then a breathing loop.
+// =====================================================================
+timeline duration=2 {
+  animate card localScale -> 1,1 from=0,0 duration=0.6 ease=spring(180,12,1,0) at=0
+  animate headline localScale -> 1,1 from=0,0 duration=0.5 ease=outBack at=0.3
+  animate ring Stroke.width -> 6 from=0 duration=0.5 ease=outQuad at=0.4
+  animate card localScale -> 1.02,1.02 from=1,1 duration=0.4 ease=inOutSine at=1.5
+}

@@ -43,6 +43,10 @@ namespace VMG.Core
         [Min(1f)]
         [Tooltip("Miter length cap as multiple of full stroke width (matches SVG stroke-miterlimit). Corners sharper than this fall back to bevel. Keyframable.")]
         public float miterLimit;
+        [Tooltip("Color the stroke with a two-stop gradient instead of the solid color. Keyframable (bool).")]
+        public bool useGradient;
+        [Tooltip("Two-stop gradient used when Use Gradient is on. Mapped across the renderer's bounds, multiplied by tint. Keyframable.")]
+        public VMGGradient gradient;
 
         public static StrokeStyle Default => new StrokeStyle
         {
@@ -53,6 +57,7 @@ namespace VMG.Core
             cap = LineCap.Butt,
             join = LineJoin.Miter,
             miterLimit = 8f,
+            gradient = VMGGradient.Default,
         };
 
         /// World-renderer default: stroke width in meters (0.04) instead
@@ -66,6 +71,7 @@ namespace VMG.Core
             cap = LineCap.Butt,
             join = LineJoin.Miter,
             miterLimit = 8f,
+            gradient = VMGGradient.Default,
         };
     }
 
@@ -76,11 +82,16 @@ namespace VMG.Core
         public bool enabled;
         [Tooltip("Fill color (multiplied by renderer tint). Keyframable.")]
         public Color color;
+        [Tooltip("Color the fill with a two-stop gradient instead of the solid color. Keyframable (bool).")]
+        public bool useGradient;
+        [Tooltip("Two-stop gradient used when Use Gradient is on. Mapped across the renderer's bounds, multiplied by tint. Keyframable.")]
+        public VMGGradient gradient;
 
         public static FillStyle Default => new FillStyle
         {
             enabled = false,
             color = Color.white,
+            gradient = VMGGradient.Default,
         };
     }
 

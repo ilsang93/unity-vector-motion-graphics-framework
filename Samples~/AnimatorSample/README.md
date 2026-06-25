@@ -40,6 +40,26 @@ then plays them in with springs, easing, and a staggered pop. The
 final `call introDone at=2` shows the event-hook syntax (wire a
 matching UnityEvent on the animator's bindings to receive it).
 
+### `gradient-wiggle.vmgfx`
+Showcases the 0.42.0 additions:
+
+- **Gradient fill / stroke.** `fill=linear-gradient(90,#10141c,#2a3550)`
+  and `fill=radial-gradient(#5ee0ff,#1b4a6b)`; a gradient-stroked ring
+  via `stroke=linear-gradient(0,#ff5ea8,#ffd166),6` (color list first,
+  width last). Angle is in degrees (0 = left→right, 90 = bottom→top);
+  optional for linear, ignored for radial.
+- **AE-style line Wiggle.** `wiggle=intensity[,frequency[,seed]]`
+  ripples the outline every frame. The path is resampled to a dense
+  spacing first, so even a rect/rounded-rect ripples *along its edges*
+  rather than sloshing as a whole, and the noise is keyed by arc length
+  so the line stays smooth (no spikes). Two outlines use different
+  intensities/frequencies/seeds so they ripple independently. Fine
+  control over ripple resolution (`spacing`) and wavelength
+  (`spatialScale`) lives in the inspector.
+
+Enable **Loop Script** to see the card keep breathing; the wiggle runs
+continuously on its own regardless of the timeline.
+
 ## DSL primer
 
 A `.vmgfx` file is just text. The most-used statements:

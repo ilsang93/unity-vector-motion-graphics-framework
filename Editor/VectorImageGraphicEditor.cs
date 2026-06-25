@@ -18,6 +18,7 @@ namespace VMG.EditorTools
         private SerializedProperty m_Fill;
         private SerializedProperty m_RoundCorners;
         private SerializedProperty m_Trim;
+        private SerializedProperty m_Wiggle;
         private SerializedProperty m_FitToRect;
         private SerializedProperty m_Texture;
 
@@ -30,6 +31,7 @@ namespace VMG.EditorTools
             m_Fill = serializedObject.FindProperty("Fill");
             m_RoundCorners = serializedObject.FindProperty("RoundCorners");
             m_Trim = serializedObject.FindProperty("Trim");
+            m_Wiggle = serializedObject.FindProperty("Wiggle");
             m_FitToRect = serializedObject.FindProperty("FitToRect");
             m_Texture = serializedObject.FindProperty("Texture");
         }
@@ -49,6 +51,7 @@ namespace VMG.EditorTools
                 EditorGUILayout.PropertyField(m_Stroke, true);
                 EditorGUILayout.PropertyField(m_RoundCorners, true);
                 EditorGUILayout.PropertyField(m_Trim, true);
+                EditorGUILayout.PropertyField(m_Wiggle, true);
             }
             if (hasSvg)
             {

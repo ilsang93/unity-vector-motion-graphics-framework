@@ -88,6 +88,23 @@ namespace VMG.Core
             mesh.RecalculateBounds();
         }
 
+        /// Recolor vertices [fromVertex, end) by evaluating a two-stop
+        /// gradient at each vertex's path-space position, then multiplying by
+        /// tint. Must run BEFORE NormalizeUVsToRect — it reads each vertex's
+        /// original 2D position from uvs[i] (AddVertex stores position there
+        /// as a placeholder). `bounds` is the rect the gradient maps across
+        /// (typically the renderer's fill+stroke union bounds so fill and
+        /// stroke gradients stay aligned).
+        public void ApplyGradient(in VMGGradient gradient, Rect bounds, Color tint, int fromVertex)
+        {
+            if (fromVertex < 0) fromVertex = 0;
+            for (int i = fromVertex; i < colors.Count; i++)
+            {
+                Color c = gradient.Evaluate(uvs[i], bounds) * tint;
+                colors[i] = c;
+            }
+        }
+
         /// Rewrite UV0 so that each vertex's UV is its position remapped into
         /// [0,1] across the given rect. Used after all geometry has been
         /// emitted (AddVertex copies position into UV as a placeholder) so

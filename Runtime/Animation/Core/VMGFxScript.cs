@@ -33,8 +33,12 @@ namespace VMG.Animation.Core
     //
     // Attribute keys recognised:
     //   add:       size, pos, position, rotation, fill, stroke, trim,
-    //              roundCorner, fitToRect, sides, corner, cornerRadius,
+    //              roundCorner, wiggle, fitToRect, sides, corner, cornerRadius,
     //              cornerRadii, points, closed
+    //              fill/stroke accept a gradient: linear-gradient(angle,a,b),
+    //              radial-gradient(a,b), gradient(a,b). stroke gradient form
+    //              is stroke=linear-gradient(45,#fff,#000),<width>.
+    //              wiggle=intensity[,frequency[,seed]] (AE-style path shake).
     //   animate:   duration, ease, at, delay, endDelay, loop, alternate, from,
     //              refreshOnLoop
     //
@@ -1546,15 +1550,42 @@ namespace VMG.Animation.Core
                         }
                         case "fill":
                         {
-                            if (TryParseColor(kv.Value, out var c)) ApplyFill(d, c);
+                            // Solid color (#fff) or gradient
+                            // (linear-gradient(45,#fff,#000) / radial-gradient(#fff,#000)).
+                            if (TryParsePaint(kv.Value, out var fg, out var fc, out var fgrad))
+                            {
+                                if (fg) ApplyFillGradient(d, fgrad);
+                                else ApplyFill(d, fc);
+                            }
                             break;
                         }
                         case "stroke":
                         {
-                            // expected: color,width  (e.g. #fff,4)
+                            // expected: color,width  (e.g. #fff,4) — color may
+                            // itself be a gradient (paren-aware split keeps the
+                            // gradient's inner commas together).
+                            var parts = SplitTupleParenAware(kv.Value);
+                            if (parts.Count >= 2
+                                && TryParsePaint(parts[0].Trim(), out var sg, out var sc, out var sgrad)
+                                && TryParseFloat(parts[parts.Count - 1].Trim(), out var w))
+                            {
+                                if (sg) ApplyStrokeGradient(d, sgrad, w);
+                                else ApplyStroke(d, sc, w);
+                            }
+                            break;
+                        }
+                        case "wiggle":
+                        {
+                            // intensity[,frequency[,seed]]  e.g. wiggle=5,3
                             var parts = SplitTuple(kv.Value);
-                            if (parts.Count >= 2 && TryParseColor(parts[0], out var c) && TryParseFloat(parts[1], out var w))
-                                ApplyStroke(d, c, w);
+                            if (parts.Count >= 1 && TryParseFloat(parts[0].Trim(), out var inten))
+                            {
+                                float freq = 2f;
+                                int seed = 0;
+                                if (parts.Count >= 2) TryParseFloat(parts[1].Trim(), out freq);
+                                if (parts.Count >= 3) TryParseInt(parts[2].Trim(), out seed);
+                                ApplyWiggle(d, inten, freq, seed);
+                            }
                             break;
                         }
                         case "trim":
@@ -1610,6 +1641,7 @@ namespace VMG.Animation.Core
             {
                 d.m_Fill.enabled = true;
                 d.m_Fill.color = c;
+                d.m_Fill.useGradient = false; // a solid fill= overrides any prior gradient
                 d.m_HasFill = true;
             }
             static void ApplyStroke(VMGShapeDescriptor d, Color c, float w)
@@ -1623,8 +1655,47 @@ namespace VMG.Animation.Core
                     cap = VMG.Core.LineCap.Butt,
                     join = VMG.Core.LineJoin.Miter,
                     miterLimit = 8f,
+                    gradient = VMGGradient.Default,
                 };
                 d.m_HasStroke = true;
+            }
+            static void ApplyFillGradient(VMGShapeDescriptor d, VMGGradient g)
+            {
+                d.m_Fill.enabled = true;
+                d.m_Fill.useGradient = true;
+                d.m_Fill.gradient = g;
+                d.m_HasFill = true;
+            }
+            static void ApplyStrokeGradient(VMGShapeDescriptor d, VMGGradient g, float w)
+            {
+                d.m_Stroke = new VMG.Core.StrokeStyle
+                {
+                    enabled = true,
+                    color = Color.white,
+                    width = w,
+                    alignment = VMG.Core.StrokeAlignment.Center,
+                    cap = VMG.Core.LineCap.Butt,
+                    join = VMG.Core.LineJoin.Miter,
+                    miterLimit = 8f,
+                    useGradient = true,
+                    gradient = g,
+                };
+                d.m_HasStroke = true;
+            }
+            static void ApplyWiggle(VMGShapeDescriptor d, float intensity, float frequency, int seed)
+            {
+                // Start from Default so spacing / spatialScale get sensible
+                // line-wiggle values (resampling on) rather than 0, which
+                // would fall back to per-node shape wiggle. DSL only exposes
+                // the three common knobs positionally; spacing / spatialScale
+                // are tuned in the inspector when needed.
+                var w = WiggleModifier.Default();
+                w.enabled = true;
+                w.intensity = intensity;
+                w.frequency = frequency;
+                w.seed = seed;
+                d.m_Wiggle = w;
+                d.m_HasWiggle = true;
             }
             static void ApplyTrim(VMGShapeDescriptor d, float a, float b)
             {
@@ -2581,6 +2652,80 @@ namespace VMG.Animation.Core
             if (!TryParseFloat(parts[3], out var w)) return false;
             v = new Vector4(x, y, z, w);
             return true;
+        }
+
+        // Splits on top-level commas only — commas inside parentheses (e.g.
+        // a gradient's color list) are kept together. Used wherever a value
+        // may itself contain a parenthesised, comma-bearing sub-expression.
+        static List<string> SplitTupleParenAware(string s)
+        {
+            var list = new List<string>();
+            if (string.IsNullOrEmpty(s)) return list;
+            int start = 0, depth = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char ch = s[i];
+                if (ch == '(') depth++;
+                else if (ch == ')') { if (depth > 0) depth--; }
+                else if (ch == ',' && depth == 0) { list.Add(s.Substring(start, i - start)); start = i + 1; }
+            }
+            list.Add(s.Substring(start));
+            return list;
+        }
+
+        // Parses a "paint" value: either a solid color (#fff, named, rgba
+        // tuple) or a two-stop gradient:
+        //   linear-gradient(angleDeg, colorA, colorB)   angle optional
+        //   gradient(colorA, colorB)                    alias for linear @ 0°
+        //   radial-gradient(colorA, colorB)
+        // On a gradient, useGradient=true and grad is filled; on a solid,
+        // useGradient=false and col holds the color.
+        static bool TryParsePaint(string raw, out bool useGradient, out Color col, out VMGGradient grad)
+        {
+            useGradient = false;
+            col = Color.white;
+            grad = VMGGradient.Default;
+            if (string.IsNullOrEmpty(raw)) return false;
+            string s = raw.Trim();
+
+            int paren = s.IndexOf('(');
+            if (paren > 0 && s.EndsWith(")"))
+            {
+                string fn = s.Substring(0, paren).Trim().ToLowerInvariant();
+                bool isLinear = fn == "linear-gradient" || fn == "gradient";
+                bool isRadial = fn == "radial-gradient";
+                if (isLinear || isRadial)
+                {
+                    string inner = s.Substring(paren + 1, s.Length - paren - 2);
+                    var parts = SplitTupleParenAware(inner);
+                    for (int i = 0; i < parts.Count; i++) parts[i] = parts[i].Trim();
+
+                    float angle = 0f;
+                    int idx = 0;
+                    // Optional leading angle for linear gradients.
+                    if (isLinear && parts.Count >= 3 && TryParseFloat(parts[0], out var a))
+                    {
+                        angle = a; idx = 1;
+                    }
+                    if (parts.Count - idx < 2) return false;
+                    if (!TryParseColor(parts[idx], out var ca)) return false;
+                    if (!TryParseColor(parts[idx + 1], out var cb)) return false;
+
+                    grad = new VMGGradient
+                    {
+                        type = isRadial ? GradientType.Radial : GradientType.Linear,
+                        colorA = ca,
+                        colorB = cb,
+                        angle = angle,
+                    };
+                    useGradient = true;
+                    return true;
+                }
+            }
+
+            // Solid color fallback.
+            if (TryParseColor(s, out col)) return true;
+            return false;
         }
 
         static bool TryParseColor(string s, out Color c)

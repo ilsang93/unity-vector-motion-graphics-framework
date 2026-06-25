@@ -96,13 +96,38 @@ namespace VMG.Core
                 && a.alignment == b.alignment
                 && a.cap == b.cap
                 && a.join == b.join
-                && a.miterLimit == b.miterLimit;
+                && a.miterLimit == b.miterLimit
+                && a.useGradient == b.useGradient
+                && (!a.useGradient || Same(a.gradient, b.gradient));
         }
 
         public static bool Same(in FillStyle a, in FillStyle b)
         {
             if (!a.enabled && !b.enabled) return true;
-            return a.enabled == b.enabled && a.color == b.color;
+            return a.enabled == b.enabled
+                && a.color == b.color
+                && a.useGradient == b.useGradient
+                && (!a.useGradient || Same(a.gradient, b.gradient));
+        }
+
+        public static bool Same(in VMGGradient a, in VMGGradient b)
+        {
+            return a.type == b.type
+                && a.colorA == b.colorA
+                && a.colorB == b.colorB
+                && a.angle == b.angle;
+        }
+
+        public static bool Same(in WiggleModifier a, in WiggleModifier b)
+        {
+            // Both inactive (disabled or zero amplitude) → no mesh effect.
+            if (!a.Enabled && !b.Enabled) return true;
+            return a.enabled == b.enabled
+                && a.intensity == b.intensity
+                && a.frequency == b.frequency
+                && a.spacing == b.spacing
+                && a.spatialScale == b.spatialScale
+                && a.seed == b.seed;
         }
 
         public static bool Same(in DepthStyle a, in DepthStyle b)

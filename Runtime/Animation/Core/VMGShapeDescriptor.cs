@@ -41,6 +41,8 @@ namespace VMG.Animation.Core
         internal bool m_HasRoundCorner;
         internal TrimPathModifier m_Trim = TrimPathModifier.Default();
         internal bool m_HasTrim;
+        internal WiggleModifier m_Wiggle = WiggleModifier.Default();
+        internal bool m_HasWiggle;
 
         // ----- Slot 0 shape (populated by derived ctors) -----
         // Slots 1..3 are reserved for future morph authoring via .Slot(i, ...).

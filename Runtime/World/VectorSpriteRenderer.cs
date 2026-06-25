@@ -23,6 +23,8 @@ namespace VMG.World
         public DepthStyle Depth = DepthStyle.Default;
         public RoundCornerModifier RoundCorners = RoundCornerModifier.Default();
         public TrimPathModifier Trim = TrimPathModifier.Default();
+        [Tooltip("AE-style wiggle: time-varying Perlin shake of every path node. Rebuilds every frame while enabled. Keyframable (intensity / frequency / seed).")]
+        public WiggleModifier Wiggle = WiggleModifier.Default();
         [Tooltip("Multiplies all fill and stroke colors. Keyframable.")]
         public Color Tint = Color.white;
         [Tooltip("Shader material. Object reference: NOT keyframable from AnimationClip — swap via script. Material property keyframing is also not supported through this component.")]
@@ -56,6 +58,7 @@ namespace VMG.World
         private DepthStyle m_PrevDepth;
         private RoundCornerModifier m_PrevRound;
         private TrimPathModifier m_PrevTrim;
+        private WiggleModifier m_PrevWiggle;
         private Color m_PrevTint;
         private float m_PrevSvgUnits;
         private VMGShapeAsset m_PrevSvgAsset;
@@ -103,6 +106,9 @@ namespace VMG.World
         bool IsMeshInputDirty()
         {
             if (!m_HasSnapshot) return true;
+            // Wiggle is time-driven: rebuild every frame while active so the
+            // shake animates. Defeats the value-equality gate by design.
+            if (Wiggle.Enabled) return true;
             if (!ReferenceEquals(m_PrevSvgAsset, SvgAsset)) return true;
             if (m_PrevTint != Tint) return true;
             if (m_PrevSvgUnits != SvgUnitsPerWorldUnit) return true;
@@ -114,6 +120,7 @@ namespace VMG.World
             if (!VectorRendererEquality.Same(m_PrevDepth, Depth)) return true;
             if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
             if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
+            if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
             return false;
         }
 
@@ -125,6 +132,7 @@ namespace VMG.World
             m_PrevDepth = Depth;
             m_PrevRound = RoundCorners;
             m_PrevTrim = Trim;
+            m_PrevWiggle = Wiggle;
             m_PrevTint = Tint;
             m_PrevSvgUnits = SvgUnitsPerWorldUnit;
             m_PrevSvgAsset = SvgAsset;
@@ -231,11 +239,15 @@ namespace VMG.World
             bool extrude = Depth.enabled && Depth.thickness > 0f;
             Depth.GetFaceZ(out float frontZ, out float backZ);
 
-            // Fill stage: ShapeStack -> RoundCorner. Trim is omitted so
-            // the closed path survives for filling.
+            float wiggleTime = WiggleTime();
+
+            // Fill stage: ShapeStack -> RoundCorner -> Wiggle. Trim is
+            // omitted so the closed path survives for filling.
             m_Pipeline.workingPath.Clear();
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
+            int fillStart = m_Combined.VertexCount;
             if (Fill.enabled)
             {
                 var fill = Fill; fill.color *= Tint;
@@ -245,11 +257,12 @@ namespace VMG.World
                     FillMeshBuilder.Build(m_Pipeline.workingPath, fill, m_Combined);
             }
 
-            // Stroke stage: ShapeStack -> RoundCorner -> Trim.
+            // Stroke stage: ShapeStack -> RoundCorner -> Wiggle -> Trim.
             m_StrokeBuf.Clear();
             m_Pipeline.workingPath.Clear();
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
+            if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
             if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
             if (Stroke.enabled)
             {
@@ -261,6 +274,22 @@ namespace VMG.World
                 if (extrude) stroke.alignment = StrokeAlignment.Inner;
                 StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
+
+            // Gradient bake: recolor fill/stroke verts across the renderer's
+            // union bounds (so both gradients share one frame), multiplied by
+            // Tint. Runs before the stroke merge + UV normalization since
+            // ApplyGradient reads each vertex's original position from its UV
+            // placeholder. The fill lives at [fillStart, count) in m_Combined;
+            // the stroke is still in m_StrokeBuf at this point.
+            if ((Fill.enabled && Fill.useGradient) || (Stroke.enabled && Stroke.useGradient))
+            {
+                Rect gradBounds = GradientUnionBounds(m_Combined, fillStart, m_StrokeBuf);
+                if (Fill.enabled && Fill.useGradient)
+                    m_Combined.ApplyGradient(Fill.gradient, gradBounds, Tint, fillStart);
+                if (Stroke.enabled && Stroke.useGradient)
+                    m_StrokeBuf.ApplyGradient(Stroke.gradient, gradBounds, Tint, 0);
+            }
+
             if (extrude)
             {
                 // Duplicate the stroke ribbon onto both fill faces so the
@@ -337,6 +366,42 @@ namespace VMG.World
                     StrokeMeshBuilder.Build(m_SvgPath, stroke, m_Combined);
                 }
             }
+        }
+
+        // Edit-mode-safe clock for wiggle: Time.time only advances in Play,
+        // so use the editor wall clock when not playing so wiggle previews
+        // live in the scene/game view at author time.
+        private static float WiggleTime()
+        {
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+                return (float)UnityEditor.EditorApplication.timeSinceStartup;
+#endif
+            return Time.time;
+        }
+
+        // 2D bounds spanning the fill range of `combined` (verts [fillStart,
+        // count)) plus all of `stroke`. Used as the shared coordinate frame
+        // for fill + stroke gradient evaluation. Reads positions from each
+        // vertex's UV placeholder (still the raw 2D position pre-normalize).
+        private static Rect GradientUnionBounds(MeshBuffer combined, int fillStart, MeshBuffer stroke)
+        {
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
+            for (int i = fillStart; i < combined.uvs.Count; i++)
+                AccumulateUv(combined.uvs[i], ref minX, ref minY, ref maxX, ref maxY);
+            for (int i = 0; i < stroke.uvs.Count; i++)
+                AccumulateUv(stroke.uvs[i], ref minX, ref minY, ref maxX, ref maxY);
+            if (float.IsPositiveInfinity(minX)) return new Rect(0f, 0f, 1f, 1f);
+            return new Rect(minX, minY, maxX - minX, maxY - minY);
+        }
+
+        private static void AccumulateUv(Vector2 v, ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            if (v.x < minX) minX = v.x;
+            if (v.y < minY) minY = v.y;
+            if (v.x > maxX) maxX = v.x;
+            if (v.y > maxY) maxY = v.y;
         }
 
         private static void AppendBuffer(MeshBuffer src, MeshBuffer dst)

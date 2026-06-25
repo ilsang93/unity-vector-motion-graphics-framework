@@ -213,6 +213,7 @@ namespace VMG.Animation.Core
             g.Stroke = d.m_Stroke;
             g.RoundCorners = d.m_RoundCorners;
             g.Trim = d.m_Trim;
+            if (d.m_HasWiggle) g.Wiggle = d.m_Wiggle;
 
             var rt = go.transform as RectTransform;
             if (rt != null)
@@ -248,6 +249,7 @@ namespace VMG.Animation.Core
             r.Stroke = d.m_Stroke;
             r.RoundCorners = d.m_RoundCorners;
             r.Trim = d.m_Trim;
+            if (d.m_HasWiggle) r.Wiggle = d.m_Wiggle;
 
             go.transform.localPosition = new Vector3(d.m_Position.x, d.m_Position.y, go.transform.localPosition.z);
         }

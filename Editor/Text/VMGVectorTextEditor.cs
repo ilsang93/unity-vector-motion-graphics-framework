@@ -57,14 +57,73 @@ namespace VMG.EditorTools
 
             if (isGrid) DrawGridControls();
 
+            DrawBakeControls();
+
             if (serializedObject.ApplyModifiedProperties())
                 PushAllTargets(); // value edits (cols/rows/points) → immediate redraw
+        }
+
+        // Bake = embed the source font's raw bytes on the component so a BUILD
+        // can parse glyph outlines without the TMP font asset's source file
+        // (which is frequently null at runtime). The editor already auto-caches
+        // bytes on every rebuild, so this is mostly a guarantee + status read;
+        // the build pre-process hook also auto-bakes anything still empty.
+        private void DrawBakeControls()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Build Bake", EditorStyles.boldLabel);
+
+            bool allBaked = true;
+            foreach (var o in targets)
+                if (o is VMGVectorTextBase c && !c.HasBakedFontBytes) allBaked = false;
+
+            if (targets.Length == 1 && target is VMGVectorTextBase single)
+            {
+                int kb = single.FontBytes != null ? single.FontBytes.Length / 1024 : 0;
+                EditorGUILayout.HelpBox(
+                    single.HasBakedFontBytes
+                        ? $"Font bytes embedded ({kb} KB) — this text will render in a build."
+                        : "No font bytes embedded yet. They auto-cache on edit; bake to guarantee a build renders.",
+                    single.HasBakedFontBytes ? MessageType.Info : MessageType.Warning);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(
+                    allBaked ? "All selected: font bytes embedded." : "Some selected have no embedded font bytes.",
+                    allBaked ? MessageType.Info : MessageType.Warning);
+            }
+
+            if (GUILayout.Button("Bake Font Bytes"))
+            {
+                foreach (var o in targets)
+                {
+                    if (o is VMGVectorTextBase c)
+                    {
+                        Undo.RecordObject(c, "Bake Font Bytes");
+                        if (c.BakeFontBytes())
+                        {
+                            EditorUtility.SetDirty(c);
+                            c.EditorRebuildAndPush();
+                        }
+                        else
+                        {
+                            Debug.LogWarning(
+                                $"[VMGVectorText] Bake failed on '{c.name}': no resolvable TrueType (.ttf) " +
+                                "source for its TMP font. CFF/OpenType-CFF (.otf) is not supported in v1.", c);
+                        }
+                    }
+                }
+                RepaintScene();
+            }
         }
 
         private void DrawWarp(SerializedProperty warp, bool isGrid)
         {
             EditorGUILayout.PropertyField(warp, false); // foldout header
             if (!warp.isExpanded) return;
+
+            var modeProp = warp.FindPropertyRelative("mode");
+            var mode = modeProp != null ? (WarpMode)modeProp.enumValueIndex : WarpMode.None;
 
             EditorGUI.indentLevel++;
             var child = warp.Copy();
@@ -75,6 +134,17 @@ namespace VMG.EditorTools
                 enter = false;
                 string name = child.name;
                 if (s_gridPointNames.Contains(name)) continue; // grouped below
+                // Grid cols/rows only matter in Grid mode; everything else is
+                // driven by amount/secondary.
+                if ((name == "gridCols" || name == "gridRows") && mode != WarpMode.Grid) continue;
+                // Relabel/hide the generic "secondary" field per mode so the
+                // inspector reads in the warp's own terms.
+                if (name == "secondary")
+                {
+                    if (!ModeUsesSecondary(mode)) continue; // Arc/Trapezoid/None/Grid don't use it
+                    EditorGUILayout.PropertyField(child, new GUIContent(SecondaryLabel(mode), child.tooltip), true);
+                    continue;
+                }
                 EditorGUILayout.PropertyField(child, true);
             }
 
@@ -94,6 +164,21 @@ namespace VMG.EditorTools
                 }
             }
             EditorGUI.indentLevel--;
+        }
+
+        // Only Circle (sweep degrees) and Wave (crest count) read the warp's
+        // `secondary` knob; Arc / Trapezoid / None / Grid ignore it.
+        private static bool ModeUsesSecondary(WarpMode mode)
+            => mode == WarpMode.Circle || mode == WarpMode.Wave;
+
+        private static string SecondaryLabel(WarpMode mode)
+        {
+            switch (mode)
+            {
+                case WarpMode.Circle: return "Sweep (degrees)";
+                case WarpMode.Wave:   return "Crests";
+                default:              return "Secondary";
+            }
         }
 
         private void DrawGridControls()

@@ -404,6 +404,51 @@ namespace VMG.Text
         }
 
 #if UNITY_EDITOR
+        /// True if usable font bytes are already embedded on this component
+        /// (so a build will render without any source-file dependency).
+        public bool HasBakedFontBytes => m_FontBytes != null && m_FontBytes.Length > 0;
+
+        /// Editor bake: resolve the current TMP font's source .ttf/.otf and
+        /// embed its raw bytes on this component (serialized field), so the
+        /// glyph outlines parse at runtime in a BUILD where the TMP font asset
+        /// often has sourceFontFile == null. Returns true if usable bytes were
+        /// embedded. Caller is responsible for marking the object dirty /
+        /// recording undo (the inspector and build hook both do).
+        ///
+        /// This is the v1 "bake": font bytes travel with the component and the
+        /// runtime re-parses them (the parse result is cached, so the cost is a
+        /// single parse at first rebuild). It deliberately does NOT freeze the
+        /// placed shape, so the text can still re-layout / wiggle / warp at
+        /// runtime.
+        public bool BakeFontBytes()
+        {
+            var t = Tmp;
+            var fa = t != null ? t.font : null;
+            if (fa == null) return false;
+
+            var path = ResolveSourceFontPathEditor(fa);
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+                return false;
+
+            byte[] bytes;
+            try { bytes = System.IO.File.ReadAllBytes(path); }
+            catch { return false; }
+            if (bytes == null || bytes.Length == 0) return false;
+
+            // Validate the bytes actually yield TrueType outlines before
+            // embedding, so baking a CFF .otf fails loudly instead of shipping
+            // dead weight that renders nothing.
+            if (GlyphOutlineProvider.FromBytes(bytes) == null) return false;
+
+            m_FontBytes = bytes;
+            // Drop the cached provider so the next rebuild re-parses the
+            // freshly embedded bytes (path-derived and embedded are identical
+            // here, but stay consistent with SetFontBytes).
+            m_ProviderFontAsset = null;
+            m_Provider = null;
+            return true;
+        }
+
         // Resolve the .ttf/.otf asset path behind a TMP_FontAsset. The runtime
         // sourceFontFile is frequently null (e.g. TMP's bundled default
         // "LiberationSans SDF" serializes m_SourceFontFile = {fileID: 0}). The

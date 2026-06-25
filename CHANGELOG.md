@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.43.0] - 2026-06-25
+
+**Vector Text (TMP)** — render TextMeshPro text as true VMG vector
+**outlines** (fill, stroke, thickness, Wiggle, WordArt warp) instead of
+TMP's SDF quads, driven through the existing VMG mesh pipeline.
+
+### Added
+
+- **`Vector Text (UI, TMP)` and `Vector Text World (TMP)` components.**
+  Add one to a GameObject that already has a `TextMeshProUGUI` (Canvas)
+  or `TextMeshPro` (World). The TMP component is kept purely as a
+  **layout engine** (`renderMode = DontRender`), and every visible glyph
+  is re-drawn as its font's actual bezier contours through the existing
+  Fill / Stroke / Wiggle / SDF-AA path. TMP gives *where* each glyph
+  sits (`textInfo.characterInfo`); a new TrueType outline parser gives
+  *what* each glyph looks like. The Canvas variant draws on an
+  auto-managed child `CanvasRenderer`; the World variant on a child
+  `MeshFilter`/`MeshRenderer` with `VMG/World/VectorSDF` — neither fights
+  TMP for the object's own renderer.
+- **TrueType (`.ttf`) outline parser** (`VMG.Fonts`). Parses the SFNT
+  tables (`head`/`maxp`/`hhea`/`hmtx`/`cmap`/`loca`/`glyf`), cmap formats
+  4 + 12, simple **and composite** glyphs, converting quadratic curves to
+  the pipeline's cubic nodes. Per-(font, glyph) cache so each glyph parses
+  once. CFF/OpenType-CFF (`.otf`) is not supported and warns once.
+- **Counter holes render correctly** (`o`, `e`, `A`, `B`, `8`). Fill now
+  has a shared multi-contour path: `FillTessellator.TriangulateMulti` runs
+  one even-odd scanline over the union of a glyph's contours, so inner
+  counters carve as holes regardless of contour winding. The same fix
+  applies to SVG: a single `<path>` with multiple sub-contours of the same
+  fill (`VectorImageGraphic.PopulateFromSvg`) now carves holes too.
+- **Text Warp (WordArt).** A `Warp` field bends the whole text block per
+  glyph vertex: **Arc**, **Circle** (ring; `secondary` = sweep degrees),
+  **Trapezoid**, **Wave** (`secondary` = crest count), and **Grid** — a
+  free-form envelope whose control points drag via Scene-view handles.
+  Glyphs are densely flattened before warping so non-linear maps stay
+  spike-free at sharp corners, and stroke joins drop to bevel under warp
+  to avoid miter blow-out. Grid control points are 36 flat, named
+  `Warp.p00 … p35` fields so each is **keyframable** in the Animation
+  window (arrays/lists are not).
+- **Per-style gradients on vector text.** Fill and stroke honour
+  `useGradient`, mapped across the glyph union bounds (same machinery as
+  the renderers), with fill and stroke kept in separate buffers so their
+  gradients don't clobber each other.
+- **Build bake.** The renderer parses the font's `.ttf` bytes, which a
+  built player can't read from `AssetDatabase` (and TMP font assets often
+  report `sourceFontFile == null` at runtime). Source bytes are therefore
+  **embedded on the component** and re-parsed at load. The editor
+  auto-caches them on every rebuild; a **Bake Font Bytes** inspector
+  button embeds them explicitly; and a **build pre-process** step
+  auto-bakes any vector-text component still missing bytes so a build
+  renders without manual action.
+- **Sample: Vector Text (TMP).** Canvas + World quick-starts plus a
+  `VMGDemoTextWarp` script that breathes the warp between flat and fully
+  warped at runtime with no Animator.
+
+### Notes
+
+- `AddComponentMenu` for every VMG component is now unified under a single
+  `VMG/` root with `Rendering` / `Masking` / `Animation` / `Utility`
+  subcategories.
+- TextMeshPro ships inside `com.unity.ugui` on Unity 6000.x, so the
+  existing `com.unity.ugui` dependency already covers it — no new package
+  dependency was added.
+
 ## [0.42.0] - 2026-06-25
 
 Two AE-inspired authoring features: gradient paint for fill/stroke,

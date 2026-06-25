@@ -1,0 +1,15 @@
+{
+    "name": "VMG.Samples.VectorText",
+    "rootNamespace": "VMG.Samples",
+    "references": [
+        "VMG.Runtime",
+        "VMG.Runtime.Text",
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true,
+    "noEngineReferences": false
+}

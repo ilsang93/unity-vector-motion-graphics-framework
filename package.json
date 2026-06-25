@@ -1,6 +1,6 @@
 {
   "name": "com.ilsang.vmg",
-  "version": "0.42.0",
+  "version": "0.43.0",
   "displayName": "Ilsang VMG - Vector Motion Graphics Framework",
   "description": "Procedural vector motion graphics runtime for Unity. AE-style shape layers (path/stroke/fill/trim/round corner) with full Animator/Timeline integration for both UGUI and world-space rendering.",
   "unity": "6000.3",
@@ -44,6 +44,11 @@
       "displayName": "Showcase",
       "description": "Advanced .vmgfx script exercising the full DSL — stagger with lockstep child statements, spring/cubicBezier ease, motion via keyframes, Trim/RoundCorners, labels, and event hooks.",
       "path": "Samples~/Showcase"
+    },
+    {
+      "displayName": "Vector Text (TMP)",
+      "description": "Render TextMeshPro text as VMG vector outlines — fill, stroke, wiggle and WordArt-style warp. Canvas + World variants, with a live warp-sweep demo script.",
+      "path": "Samples~/VectorText"
     }
   ]
 }

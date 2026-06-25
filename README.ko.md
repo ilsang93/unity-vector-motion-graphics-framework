@@ -2,38 +2,30 @@
 
 [English](README.md) · [한국어](README.ko.md)
 
-Unity용 절차적(procedural) 벡터 모션 그래픽 런타임. After Effects의 셰이프 레이어 같은 표현력을, UGUI와 월드 스페이스 양쪽 렌더러에서 Unity Animator / Timeline과 완전히 통합되는 형태로 제공합니다.
+> Unity용 절차적(procedural) **벡터 모션 그래픽** 프레임워크 — After Effects
+> 스타일의 셰이프 레이어(path / stroke / fill / trim / round-corner), SVG·
+> TextMeshPro 벡터화, 스텐실 마스킹, 독립형 애니메이터를 **UGUI와 월드 스페이스
+> 양쪽**에서 줌과 무관한 안티앨리어싱으로 렌더링합니다.
 
-## 주요 기능 (0.32.0)
+---
 
-- Path + Node 데이터 모델, 노드별 큐빅 베지어(`inTangent` / `outTangent`) 지원. 모든 모디파이어 적용 전에 미리 테셀레이션됨
-- CPU 기반 절차적 메시 생성
-- **ShapeStack** — 최대 4개의 프리미티브 셰이프를 arc-length 리샘플링과 슬롯별 강도(intensity) 가중치로 블렌딩. 기존 "단일 셰이프 + Morph 모디파이어" 구조를 대체하며 모든 슬롯이 대칭적임
-- 스트로크(Stroke)
-  - Inner / Center / Outer 정렬
-  - Cap: Butt / Square / Round
-  - Join: Miter (limit 지원) / Bevel / Round
-- 필(Fill) — 자체 ear-clipping 삼각화기 (오목 다각형 안전)
-- **Depth (3D 두께)** — `VectorSpriteRenderer` 전용. 필을 Z축 방향으로 extrude하며 Front / Center / Back 피벗 정렬 선택 가능. Vertex normal을 명시해서 lit 머티리얼이 측면 음영을 처리함. **3D URP 렌더러(Forward / Forward+ / Deferred)와 Opaque 머티리얼이 필요함** — 2D Renderer나 Transparent 머티리얼에서는 광원/오클루전이 정상 작동하지 않음
-- 모디파이어 (고정 순서: RoundCorner → Trim)
-  - Round Corner — 인접 코너 클램핑 포함 실제 경로 레벨 라운딩
-  - Trim Path — 닫힌 경로 wrap 지원, 열린 경로 안전 클램프(오프셋이 끝을 넘어도 깜빡임 없음)
-- 프리미티브: Circle, Ellipse, Rectangle, Rounded Rectangle, Polygon, Free Path
-- UGUI 렌더러 (`VectorImageGraphic`) — `MaskableGraphic`이라 `Mask` / `RectMask2D`와 연동
-- 월드 렌더러 (`VectorSpriteRenderer`) — `MeshFilter` + `MeshRenderer`
-- SVG 임포트 — 프로젝트에 `.svg` 파일을 드롭하면 ScriptedImporter가 `VMGShapeAsset`을 생성, 양쪽 렌더러 모두 참조 가능. path `d` grammar 전체, 기본 도형, viewBox, transform, fill/stroke 스타일 모두 지원
-- SceneView 핸들 — 활성 스택 슬롯의 FreePath 노드와 베지어 탄젠트를 직접 드래그해서 편집. SceneView 좌상단의 작은 오버레이로 핸들이 어느 슬롯을 대상으로 할지 선택
-- 렌더러별 커스텀 셰이더 머티리얼 / 텍스처
-  - UGUI: `Material` 슬롯 + `Texture` (`Graphic.mainTexture` 바인딩, 머티리얼 인스턴싱 없음)
-  - World: `Material` 슬롯 + `Texture` (`MaterialPropertyBlock` 바인딩, 공유 머티리얼 보존)
-  - 메시 UV는 렌더러 footprint에 대해 `[0,1]`로 정규화됨
-- `VectorSpriteRenderer`의 Sorting Layer / Order in Layer 필드 (`SpriteRenderer`와 동일한 사용성)
-- 모든 애니메이션 가능 파라미터가 `[SerializeField]`로 노출되어 AnimationClip / Timeline에서 키프레임 가능
-- 에디터 메뉴
-  - `GameObject ▸ UI ▸ Vector Image`
-  - `GameObject ▸ 2D Object ▸ Vector Sprite Renderer`
+## ✨ 핵심 기능 한눈에
 
-## 설치
+| | |
+|---|---|
+| 🟦 **절차적 셰이프** | Circle, Rectangle, Polygon, Free Path… 4슬롯 **ShapeStack**으로 블렌딩 |
+| ✒️ **스트로크 & 필** | 정렬 / cap / join, 오목 다각형 안전 필, **2-stop 그라데이션** |
+| 🔠 **벡터 텍스트 (TMP)** | TextMeshPro를 진짜 글리프 **외곽선**으로 렌더 + **WordArt 워프** |
+| 🖼️ **SVG 임포트** | `.svg` 드롭 → 렌더 가능한 `VMGShapeAsset` (path, `defs`/`use`, 스타일) |
+| ✂️ **스텐실 마스킹** | `VMGMaskGroup` / `Source` / `Client` 기반 다중 소스 동적 마스크 |
+| 🌊 **모디파이어** | Round Corner, Trim Path, **AE 스타일 Wiggle** |
+| 🎞️ **애니메이터** | AnimationClip/Timeline로 전부 키프레임, **또는** 내장 `VMGAnimator` |
+| 🧊 **월드 전용 기능** | 3D **Depth** 두께, **Billboard**, Sorting Layer/Order |
+| 🪶 **어떤 줌에서도 선명** | 두 렌더러 모두 SDF 기반 엣지 안티앨리어싱 |
+
+---
+
+## 📦 설치
 
 `Packages/manifest.json`에 추가:
 
@@ -41,15 +33,167 @@ Unity용 절차적(procedural) 벡터 모션 그래픽 런타임. After Effects�
 "com.ilsang.vmg": "https://github.com/ilsang93/unity-vector-motion-graphics-framework.git"
 ```
 
-또는 `Packages/com.ilsang.vmg`에 로컬/임베디드 패키지로 복사해서 사용.
+또는 `Packages/com.ilsang.vmg`에 로컬/임베디드 패키지로 복사.
 
-## 샘플
+**요구 사항:** Unity **6000.3+**, uGUI(`com.unity.ugui`). Unity 6에서는 TextMeshPro가
+uGUI에 포함되어 있으므로 벡터 텍스트를 위한 별도 의존성이 필요 없습니다.
 
-Package Manager ▸ VMG ▸ Samples ▸ Basic Shapes에서 임포트 (DOTween이 설정되어 있으면 Tween Integration도).
+---
 
-## DOTween / UniTask 연동
+## 🚀 빠른 시작
 
-프로젝트에 DOTween이 설치되어 있고 `VMG_DOTWEEN` 스크립팅 디파인 심볼이 정의되어 있을 때 (UPM 설치 시 자동 정의됨), 별도 어셈블리에서 단축 익스텐션을 제공합니다:
+렌더러는 둘, 셰이프 모델은 동일합니다:
+
+| 렌더러 | 컴포넌트 | 생성 메뉴 |
+|---|---|---|
+| **UI (캔버스)** | `VectorImageGraphic` | `GameObject ▸ UI (Canvas) ▸ Vector Image` |
+| **월드 (3D/2D)** | `VectorSpriteRenderer` | `GameObject ▸ 2D Object ▸ Vector Sprite Renderer` |
+
+1. 위 중 하나를 생성하면 160×160 벡터 원이 만들어집니다.
+2. 인스펙터에서 **ShapeStack ▸ Slot 0 ▸ Shape ▸ Kind** 설정 (Circle / Rectangle /
+   Rounded Rectangle / Polygon / Free Path).
+3. **Fill**과 **Stroke**를 독립적으로 토글, `linear-gradient` 필도 시도해 보세요.
+4. 모디파이어(Trim / Round Corner / Wiggle)를 추가하거나 아무 필드나 키프레임 —
+   그대로 동작합니다.
+
+---
+
+## 🧩 주요 기능
+
+### 셰이프 — ShapeStack
+
+최대 **4개의 프리미티브 셰이프**를 arc-length 리샘플링과 슬롯별 **intensity**
+가중치로 블렌딩합니다 (별도의 "morph" 모디파이어 없이 모든 슬롯이 대칭).
+`SlotN.intensity`를 애니메이션하면 셰이프 간 모핑이 됩니다.
+
+- **프리미티브:** Circle, Ellipse, Rectangle, Rounded Rectangle, Polygon, Free Path
+- **Free Path:** 노드별 큐빅 베지어(`inTangent` / `outTangent`), Scene 뷰에서 핸들
+  드래그로 편집 (작은 오버레이로 핸들 대상 슬롯 선택)
+
+### 스트로크 & 필
+
+- **스트로크** — Inner / Center / Outer 정렬 · cap(Butt / Square / Round) ·
+  join(Miter + limit / Bevel / Round)
+- **필** — 자체 ear-clipping 삼각화기(오목 다각형 안전), 다중 컨투어 구멍 카빙(even-odd)
+- **그라데이션** — fill과 stroke 모두 2-stop **Linear / Radial** 지원, CPU에서
+  per-vertex로 베이크(완전 키프레임 가능), fill+stroke 공유 bounds 기준 매핑
+
+### 모디파이어  *(고정 순서: Round Corner → Trim → Wiggle)*
+
+- **Round Corner** — 인접 코너 클램핑 포함 실제 경로 레벨 라운딩
+- **Trim Path** — start / end / offset, 닫힌 경로 wrap, 열린 경로 깜빡임 없는 안전 클램프
+- **Wiggle** — After Effects 스타일로 *선을 따라* 출렁이는 리플(arc-length 리샘플,
+  스파이크 없음), intensity / frequency / spacing / seed 조절
+
+### 벡터 텍스트 (TMP)
+
+**TextMeshPro** 텍스트를 진짜 VMG 벡터 **외곽선**으로 렌더 — 필, 스트로크(테두리),
+두께, Wiggle, WordArt 워프. TMP는 순수하게 **레이아웃 엔진**으로만 사용하고
+(`DontRender`), 각 글리프의 모양은 폰트의 TrueType(`.ttf`) 외곽선을 직접 파싱해서
+가져옵니다.
+
+- `VMG ▸ Rendering ▸ Vector Text (UI, TMP)` — `TextMeshProUGUI`와 연동
+- `VMG ▸ Rendering ▸ Vector Text World (TMP)` — 월드 `TextMeshPro`와 연동
+- **워프(WordArt):** Arc · Circle · Trapezoid · Wave · **Grid** (Scene 뷰에서
+  컨트롤 포인트 핸들 드래그; 모든 포인트가 키프레임 가능)
+- **빌드 베이크:** 폰트 바이트가 컴포넌트에 임베드되고 빌드 시 자동 베이크되므로,
+  TMP 폰트에 소스 파일 참조가 없어도 플레이어에서 텍스트가 렌더됩니다.
+  *(TrueType 전용; CFF/`.otf`는 미지원.)*
+
+### SVG 임포트
+
+프로젝트에 `.svg`를 드롭하면 ScriptedImporter가 두 렌더러 모두 참조할 수 있는
+`VMGShapeAsset`을 생성합니다. path `d` grammar 전체, 기본 도형, `viewBox`,
+transform, fill/stroke 스타일, **`<defs>`/`<use>`/`<symbol>` 인라이닝**,
+**`<style>` 클래스 셀렉터**를 지원합니다.
+
+### 스텐실 마스킹
+
+Unity의 단일 그래픽 `Mask`를 넘어서는 동적·다중 소스 마스크:
+
+- **`VMGMaskGroup`** — 하위 트리에 마스크 영역 정의
+- **`VMGMaskSource`** — 마스크 모양을 *기록*하는 그래픽
+- **`VMGMaskClient`** — 그 마스크를 통해 *드러나는* 그래픽
+
+여러 소스가 하나의 스텐실 채널로 결합되며(비트 슬롯 풀링), 표준 `Mask` 안에
+중첩됩니다. DSL로도 작성 가능: `mask <name> { … }` + `add … in=<maskName>`.
+
+### 선명한 엣지 (SDF 안티앨리어싱)
+
+두 렌더러 모두 signed-distance 채널을 출력하므로, `VMG/UI/VectorSDF` ·
+`VMG/World/VectorSDF` 셰이더가 **줌과 무관하게** 약 1px 엣지를 페이드합니다 —
+확대하든 축소하든 벡터가 깔끔하게 유지됩니다.
+
+---
+
+## 🌍 월드 렌더러 전용 기능
+
+- **Depth (3D 두께)** — 필을 Z축으로 extrude(Front / Center / Back 피벗), 실제
+  vertex normal로 lit 음영 처리. *3D URP 렌더러 + **Opaque** 머티리얼 필요;
+  2D Renderer / Transparent에서는 광원·오클루전이 정상 작동하지 않음.*
+- **Billboard** (`VMG ▸ Utility ▸ Billboard`) — 카메라 또는 타겟을 바라보기, 축
+  제약과 tilt 오프셋 옵션 포함.
+- **Sorting** — `Sorting Layer` / `Order in Layer` 필드 (`SpriteRenderer`와 동일).
+
+---
+
+## 🎞️ 애니메이션
+
+### AnimationClip / Timeline에서 키프레임
+
+설계 목표: **모든 인스펙터 필드가 키프레임 가능**. 두 렌더러 모두 매 프레임 dirty로
+마크되므로(UGUI `LateUpdate`, World `Update`) Animator가 쓰는 값이 항상 메시에
+다시 반영됩니다.
+
+노출 채널: **ShapeStack**(`resampleCount`, 슬롯별 `intensity` 및 셰이프 전체 surface),
+**FreePath 노드**(`Node00…Node63` position/tangent — Record 중 핸들을 드래그하면
+키프레임 생성), **Stroke / Fill**(그라데이션 포함), **모디파이어**(각 `enabled`
+플래그 포함), **Depth**.
+
+**셰이프 모핑:** 각 셰이프를 별도 슬롯에 넣고 intensity(0 ↔ 1)를 키프레임하세요.
+4개 슬롯 모두 동등하게 가중되며 "베이스" 슬롯은 없습니다.
+
+> 키프레임 불가: `Material` / `Texture` / `SvgAsset` 오브젝트 참조(→ `AnimationEvent`나
+> Timeline `Signal`로 교체), FreePath 노드 순서 변경(→ 인스펙터 +/- 버튼 사용).
+
+### VMGAnimator — 내장, Timeline 의존성 없음
+
+`PlayableDirector` / Unity Timeline이 **필요 없는** 자체 애니메이터. 세 가지
+작성 방식이 하나의 엔진을 구동합니다:
+
+- **`VMGAnimationClip`** — ScriptableObject 클립, 전용 타임라인 윈도우에서 편집:
+  트랙별 키 + ease, 다중 타겟, 이벤트, baseline 복원, 여러 GameObject에 걸친
+  **트랙 그룹**.
+- **코드 API (anime.js 스타일):**
+  ```csharp
+  VMGFx.Animate(target).To(...).Duration(0.4f).Ease(Ease.OutCubic).Play();
+  VMGFx.Timeline().Add(a, "+=0.2").Add(b, "<");   // 상대 위치
+  VMGFx.Stagger(targets, ...);                    // 타겟별 오프셋
+  ```
+  여기에 spring, motion-path, function-value 채널까지.
+- **`.vmgfx` DSL** — 평문 스크립트(`add`, `animate`, `timeline`, `keyframes`,
+  `stagger`, `mask` 등). 에셋을 `VMGAnimator.script`에 할당하면 enable 시 빌드됩니다.
+  `playOnEnable` / `loopScript` 토글 포함.
+
+### CSS `@keyframes` 임포터
+
+`VMGCssKeyframes.Translate(css, out warnings)` — self-contained CSS 키프레임
+애니메이션을 `.vmgfx` 텍스트로 변환. AE / Figma / Bodymovin export 대상
+(`transform`, `opacity`, 색상/테두리, W3C cubic-bezier easing).
+
+- `Tools ▸ VMG ▸ Import CSS @keyframes…` (파일 다이얼로그)
+- `Tools ▸ VMG ▸ CSS → VMGFx Window` (붙여넣기)
+
+*제외 범위: HTML 동반 입력, CSS cascade, pseudo-class 상태, element별 custom
+property stagger — `@keyframes` 핵심만 추린 뒤 element 효과는 `VMGFx.Stagger`로
+재구성하세요.*
+
+---
+
+## 🔌 DOTween 연동 *(선택)*
+
+DOTween이 설치되어 있고 `VMG_DOTWEEN`이 정의되어 있으면(UPM 설치 시 자동 설정),
+별도 어셈블리가 fluent 단축 익스텐션을 추가합니다 — 코어에 하드 의존성 없음:
 
 ```csharp
 using VMG.Tween;
@@ -57,76 +201,28 @@ using VMG.Tween;
 vectorImage.DOFade(0f, 0.4f);
 vectorImage.DOTrim(1f, 0.8f).SetEase(Ease.OutCubic);
 vectorImage.DOStrokeColor(Color.red, 0.5f);
-await vectorImage.DOSize(new Vector2(300, 300), 0.6f).AsyncWaitForCompletion();
-
-// 두 셰이프 간 크로스페이드:
-vectorImage.DOSlotIntensity(1, 1f, 0.8f);    // 슬롯 1을 켜기
-vectorImage.DOSlotIntensity(0, 0f, 0.8f);    // 슬롯 0을 끄기
+vectorImage.DOSlotIntensity(1, 1f, 0.8f);   // 셰이프 간 크로스페이드
 ```
 
-DOTween이 없는 프로젝트에는 영향을 주지 않습니다 (하드 의존성 없음). 전체 surface는 `Samples~/TweenIntegration/README.md` 참고.
+---
 
-## 독립형 애니메이션 (VMGAnimator)
+## 📚 샘플
 
-아래의 Unity AnimationClip / Timeline 경로 외에도, VMG는 `PlayableDirector`나 Unity Timeline에 의존하지 않는 자체 애니메이터를 함께 제공합니다. 세 가지 작성 방식이 모두 같은 엔진을 구동합니다:
+**Package Manager ▸ VMG ▸ Samples**에서 임포트:
 
-- **`VMGAnimationClip` + VMGAnimator** — ScriptableObject 클립 에셋, 전용 타임라인 윈도우에서 편집. 트랙별 키와 ease, 다중 타겟, 이벤트, baseline 복원 지원. 컴포지션 그룹으로 여러 GameObject에 걸친 트랙들(예: "Hero entrance")을 하나의 묶음으로 관리 — 우클릭 할당과 드래그 reorder 지원.
-- **코드 API (anime.js 스타일 fluent 빌더)** — `VMGFx.Animate(target).To(...).Duration(...).Ease(...).Play()`, 시퀀싱용 `VMGFx.Timeline()` (상대 위치 `"+=0.2"`, `"<"`, `"-=F"`), 타겟별 오프셋용 `VMGFx.Stagger(targets, ...)`, spring / motion-path / function-value 채널.
-- **`.vmgfx` DSL** — 평문 스크립트 (`add`, `animate`, `timeline`, `keyframes`, `stagger` 등) 가 같은 엔진으로 컴파일됨. `.vmgfx` 파일(또는 임의의 TextAsset)을 `VMGAnimator.script`에 할당하면 enable 시점에 하위 계층이 빌드됨. 1회 재생 vs 무한 재생을 위한 `playOnEnable` / `loopScript` 토글 제공.
+| 샘플 | 내용 |
+|---|---|
+| **Basic Shapes** | Trim 스윕, 라운드 사각형, 원 ⇄ 사각형 모핑 |
+| **Vector Text (TMP)** | TMP → 벡터 외곽선, Canvas + World, 실시간 워프 데모 |
+| **SVG Import** | ScriptedImporter를 통한 `.svg` 아이콘 |
+| **Animator** | `VMGAnimator`를 구동하는 `.vmgfx` 스크립트 (AnimationClip 불필요) |
+| **Showcase** | 전체 DSL — stagger, spring/cubic-bezier ease, keyframes, 이벤트 |
+| **DOTween Integration** | `DOFade` / `DOTrim` / `DOSize` 익스텐션 (DOTween 필요) |
 
-### CSS `@keyframes` 임포터
+---
 
-`VMG.Animation.Serialization.VMGCssKeyframes.Translate(css, out warnings)` — self-contained CSS 키프레임 애니메이션을 `.vmgfx` 텍스트로 변환. AE / Figma / Bodymovin의 CSS export를 대상으로 설계됨 — `transform`, `opacity`, 색상 / 테두리 채널과 W3C 스펙 cubic-bezier easing 매핑 지원. 에디터 진입점:
+## 📄 라이선스 & 링크
 
-- `Tools ▸ VMG ▸ Import CSS @keyframes…` — 파일 다이얼로그
-- `Tools ▸ VMG ▸ CSS → VMGFx Window` — 붙여넣기 윈도우
-
-의도적으로 제외된 범위: HTML 동반 입력, CSS cascade, pseudo-class 상태, element 별 custom property 기반 stagger. 야생 데모는 `@keyframes` 핵심만 추려서 임포트하고, element 단위 효과는 `VMGFx.Stagger`와 타임라인 상태로 재구성하는 흐름을 권장.
-
-## 애니메이션 지원
-
-VMG의 설계 목표는 "인스펙터에서 편집할 수 있는 모든 파라미터는 `AnimationClip` / Timeline에서도 키프레임 가능하다"입니다. 두 렌더러 모두 매 프레임 dirty 마크 처리되므로 (UGUI는 `LateUpdate`, World는 `Update`) Animator가 쓰는 값이 항상 메시에 반영됩니다.
-
-### AnimationClip에서 키프레임 가능
-
-모든 인스펙터 필드가 struct 멤버로 노출되어 있어서 Animation 윈도우의 "Add Property" 트리가 안쪽까지 들어갈 수 있습니다. 전체 목록:
-
-- **ShapeStack** — `resampleCount`, 그리고 4개 슬롯:
-  - `Slot0..Slot3.intensity` — 블렌드 가중치 (0이면 비활성)
-  - `Slot0..Slot3.shape.*` — PrimitiveShapeSource 전체 surface
-- **프리미티브 셰이프 (슬롯별)** — `kind`, `center.x/y`, `size.x/y`, `sides`, `cornerRadii.x/y`, `circleSegments`, `bezierSamplesPerSegment`, `freeClosed`, `activeNodeCount`
-- **FreePath 노드 (슬롯별)** — 플랫 슬롯별로 `Node00.position.x/y`, `Node00.inTangent.x/y`, `Node00.outTangent.x/y`, `Node00.type` ... `Node63`까지. Animation 윈도우에서 직접 바인딩하거나, Record가 켜진 상태에서 SceneView 핸들을 드래그하면 자동으로 플레이헤드 위치에 키프레임이 생성됨
-- **Stroke** — `enabled`, `color.rgba`, `width`, `alignment`, `cap`, `join`, `miterLimit`
-- **Fill** — `enabled`, `color.rgba`
-- **모디파이어** — `RoundCornerModifier`와 `TrimPathModifier`의 모든 직렬화 필드 (각자의 `enabled` 플래그 포함 — 클립 중간에 모디파이어를 켜고 끌 수 있음)
-- **UGUI 렌더러** — `FitToRect`, `Graphic.color`
-- **월드 렌더러** — `Tint`, `SvgUnitsPerWorldUnit`, `SortingLayerID`, `SortingOrder`
-- **Depth (월드 렌더러 전용)** — `Depth.enabled`, `Depth.thickness`, `Depth.alignment`
-
-### 다중 셰이프 블렌딩
-
-ShapeStack이 기존 PathMorphModifier를 대체:
-
-1. "출발" 셰이프를 슬롯 0에 (intensity 1)
-2. "도착" 셰이프를 슬롯 1에 (intensity 0)
-3. `Slot1.intensity`를 0 → 1로 키프레임 — 렌더러가 두 경로를 arc-length 리샘플링한 뒤 인덱스별로 lerp
-4. 선택적으로 슬롯 0의 intensity를 병렬로 페이드아웃하면 클립 끝에서 순수한 도착 셰이프가 됨
-
-4개 슬롯 모두 동등하게 가중치 처리됩니다. "베이스" 슬롯이 따로 없습니다. 3~4개 슬롯을 동시에 활성화하면 매끄러운 N-way 블렌드가 가능.
-
-### FreePath 노드 애니메이션
-
-노드를 평소처럼 편집하면 됩니다 — SceneView 핸들은 모든 드래그를 `SerializedProperty` 경유로 처리하므로, Animation 윈도우의 Record 모드가 자동으로 플레이헤드 위치에 키프레임을 캡처합니다. 별도 동기화 작업이나 평행 surface 없음.
-
-SceneView 좌상단 오버레이로 핸들이 어느 스택 슬롯의 노드를 다룰지 선택합니다. FreePath가 아닌 슬롯을 선택하면 핸들이 표시되지 않습니다 (`kind` 필드가 결정 — Circle, Rectangle 등에는 노드 핸들이 없음).
-
-Unity AnimationClip의 유일한 실제 제약:
-
-- **노드 개수(`activeNodeCount`)는 키프레임 가능하지만**, 클립 중간에 새로 나타나는 슬롯은 그 슬롯 필드에 저장되어 있던 데이터를 그대로 사용하지, 이전 프레임의 보이는 노드로부터 매끄럽게 들어오지 않습니다. 시각적 노드 개수가 자연스럽게 늘어나야 하는 트랜지션(삼각형 → 오각형)에는 각 셰이프를 별도 ShapeStack 슬롯에 두고 intensity를 애니메이션하는 것을 권장.
-
-### AnimationClip에서 키프레임 불가
-
-| 필드 | 이유 | 우회 방법 |
-|---|---|---|
-| `Material`, `Texture`, `SvgAsset` (모든 Object 참조) | AnimationClip의 Object 트랙은 PPtr 전용이며 이 슬롯들에 노출되지 않음 | 스크립트로 교체 (`AnimationEvent` 콜백 또는 Timeline `Signal`) |
-| FreePath 노드 순서 변경 | 슬롯 인덱스가 키프레임 채널이므로, 이름 변경/순서 변경은 바인딩을 깨뜨림 | 끝에서만 추가/제거 (인스펙터의 +/- 버튼) |
+- **저장소:** <https://github.com/ilsang93/unity-vector-motion-graphics-framework>
+- **패키지 id:** `com.ilsang.vmg` · **네임스페이스:** `VMG.Core`, `VMG.UI`,
+  `VMG.World`, `VMG.Svg`, `VMG.Text`, `VMG.Tween`

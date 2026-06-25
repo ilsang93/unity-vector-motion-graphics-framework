@@ -19,7 +19,7 @@ namespace VMG.Utility
     /// `TiltOffset` is a local-space Euler rotation applied AFTER alignment
     /// — animate it via VMGAnimator for "wobble while facing camera"
     /// patterns.
-    [AddComponentMenu("VMG/Billboard")]
+    [AddComponentMenu("VMG/Utility/Billboard", 0)]
     [ExecuteAlways]
     [DefaultExecutionOrder(int.MaxValue / 2)]
     public sealed class VMGBillboard : MonoBehaviour

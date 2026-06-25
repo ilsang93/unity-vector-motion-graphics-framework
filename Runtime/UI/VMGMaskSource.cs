@@ -19,7 +19,7 @@ namespace VMG.UI
     /// enabled. Without rasterised pixels there's nothing to stamp the
     /// stencil with; the fill colour itself is invisible since the
     /// material masks out colour writes when ShowSource is false.
-    [AddComponentMenu("UI/VMG/Mask Source", 13)]
+    [AddComponentMenu("VMG/Masking/Mask Source", 1)]
     [RequireComponent(typeof(Graphic))]
     [ExecuteAlways]
     [DisallowMultipleComponent]

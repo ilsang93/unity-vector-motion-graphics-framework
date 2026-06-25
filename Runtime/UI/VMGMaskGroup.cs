@@ -22,7 +22,7 @@ namespace VMG.UI
     /// also skips any upper-nibble bit that overlaps the parent depth
     /// range, so a sufficiently deep nesting (parent depth >= 7) simply
     /// reports "no slot available" instead of silently colliding.
-    [AddComponentMenu("UI/VMG/Mask Group", 12)]
+    [AddComponentMenu("VMG/Masking/Mask Group", 0)]
     [ExecuteAlways]
     [DisallowMultipleComponent]
     public sealed class VMGMaskGroup : MonoBehaviour

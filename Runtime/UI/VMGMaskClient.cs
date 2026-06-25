@@ -8,7 +8,7 @@ namespace VMG.UI
     /// VMGMaskGroup has been stamped by any VMGMaskSource. Tests both
     /// the group's bit AND the ancestor standard-Mask bits, so the
     /// visible region is exactly (outer Mask) ∩ (VMG group).
-    [AddComponentMenu("UI/VMG/Mask Client", 14)]
+    [AddComponentMenu("VMG/Masking/Mask Client", 2)]
     [RequireComponent(typeof(Graphic))]
     [ExecuteAlways]
     [DisallowMultipleComponent]

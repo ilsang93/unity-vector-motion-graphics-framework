@@ -7,7 +7,7 @@ namespace VMG.World
     /// World-space procedural vector renderer using MeshFilter + MeshRenderer.
     /// Shares the Core pipeline with VectorImageGraphic so identical shape data
     /// renders identically in UGUI and world space.
-    [AddComponentMenu("VMG/Vector Sprite Renderer", 11)]
+    [AddComponentMenu("VMG/Rendering/Vector Sprite Renderer", 1)]
     [ExecuteAlways]
     [RequireComponent(typeof(MeshFilter))]
     [RequireComponent(typeof(MeshRenderer))]

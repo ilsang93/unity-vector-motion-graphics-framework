@@ -1,20 +1,15 @@
 {
-    "name": "VMG.Editor",
-    "rootNamespace": "VMG.EditorTools",
+    "name": "VMG.Runtime.Text",
+    "rootNamespace": "VMG.Text",
     "references": [
         "VMG.Runtime",
+        "VMG.Runtime.Svg",
         "VMG.Runtime.UI",
         "VMG.Runtime.World",
-        "VMG.Runtime.Svg",
-        "VMG.Runtime.Animation",
-        "VMG.Runtime.Text",
         "Unity.TextMeshPro",
-        "UnityEngine.UI",
-        "UnityEditor.UI"
+        "UnityEngine.UI"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

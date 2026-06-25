@@ -28,6 +28,27 @@ namespace VMG.Core
 
         public int VertexCount => vertices.Count;
 
+        /// Append another buffer's geometry into this one, offsetting its
+        /// triangle indices. Normals are copied only when both buffers either
+        /// use them or don't, so a mixed (some-normal) state isn't created —
+        /// callers that need normals must ensure both buffers are normal-aware.
+        public void Append(MeshBuffer other)
+        {
+            if (other == null || other.vertices.Count == 0) return;
+            int baseV = vertices.Count;
+            vertices.AddRange(other.vertices);
+            colors.AddRange(other.colors);
+            uvs.AddRange(other.uvs);
+            uv1s.AddRange(other.uv1s);
+            // Keep normals consistent: only carry them over if this buffer
+            // already tracks one-per-vertex and the other does too.
+            bool thisHasNormals = normals.Count == baseV;
+            bool otherHasNormals = other.normals.Count == other.vertices.Count;
+            if (thisHasNormals && otherHasNormals) normals.AddRange(other.normals);
+            for (int i = 0; i < other.triangles.Count; i++)
+                triangles.Add(baseV + other.triangles[i]);
+        }
+
         public void AddVertex(Vector2 p, Color32 c)
         {
             vertices.Add(new Vector3(p.x, p.y, 0f));

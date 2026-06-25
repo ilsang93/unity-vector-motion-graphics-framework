@@ -61,6 +61,53 @@ namespace VMG.Core
 
         public static IReadOnlyList<Vector2> GetEmittedVertices() => s_emitted;
 
+        // -----------------------------------------------------------------
+        // Multi-contour fill (glyph counters, SVG holes).
+        //
+        // A glyph like 'o' or a donut SVG is several SEPARATE closed loops:
+        // an outer ring plus one or more inner rings (the holes). They don't
+        // self-intersect, so the single-polyline Triangulate() would take
+        // the ear-clip fast path and fill each loop solid — the holes vanish.
+        //
+        // The even-odd rule across ALL loops at once is what carves holes:
+        // a horizontal ray through a donut crosses outer, inner, inner,
+        // outer = 4 edges, filling [outer..inner] and [inner..outer] but
+        // leaving the middle empty. So we always run the scanline
+        // decomposition over the union of every contour's edges, and never
+        // ear-clip. Direction-independent (even-odd), so contour winding
+        // from the font/SVG doesn't matter.
+        //
+        // Like Triangulate, after return the caller iterates
+        // GetEmittedVertices() and appends each as a mesh vertex at
+        // firstVert..firstVert+count-1.
+        // -----------------------------------------------------------------
+        private static readonly List<Vector2> s_flat = new List<Vector2>(256);
+        private static readonly List<int> s_loopStart = new List<int>(16);
+
+        public static void TriangulateMulti(IReadOnlyList<IReadOnlyList<Vector2>> contours, List<int> outTris, int firstVert)
+        {
+            s_emitted.Clear();
+            if (contours == null || contours.Count == 0) return;
+
+            // Flatten all contours into one vertex array, recording where
+            // each loop starts so edges never bridge between loops (the edge
+            // after a loop's last vertex wraps to that loop's first vertex,
+            // not into the next loop).
+            s_flat.Clear();
+            s_loopStart.Clear();
+            for (int c = 0; c < contours.Count; c++)
+            {
+                var loop = contours[c];
+                if (loop == null || loop.Count < 3) continue;
+                s_loopStart.Add(s_flat.Count);
+                for (int i = 0; i < loop.Count; i++) s_flat.Add(loop[i]);
+            }
+            s_loopStart.Add(s_flat.Count); // sentinel: one-past-last
+            if (s_loopStart.Count < 2 || s_flat.Count < 3) return;
+
+            BuildTrapezoidsMulti(outTris, firstVert);
+        }
+
         // O(n^2) edge-pair test. Stops at the first crossing — only the
         // boolean result is needed for the fast-path branch.
         private static bool HasSelfIntersection(IList<Vector2> p)
@@ -186,6 +233,107 @@ namespace VMG.Core
 
                     // Trapezoid vertices: bottom-left, bottom-right,
                     // top-right, top-left. CCW order.
+                    int v0 = s_emitted.Count;
+                    s_emitted.Add(new Vector2(xLLo, yLo));
+                    s_emitted.Add(new Vector2(xRLo, yLo));
+                    s_emitted.Add(new Vector2(xRHi, yHi));
+                    s_emitted.Add(new Vector2(xLHi, yHi));
+                    outTris.Add(firstVert + v0);
+                    outTris.Add(firstVert + v0 + 1);
+                    outTris.Add(firstVert + v0 + 2);
+                    outTris.Add(firstVert + v0);
+                    outTris.Add(firstVert + v0 + 2);
+                    outTris.Add(firstVert + v0 + 3);
+                }
+            }
+        }
+
+        // Multi-loop variant of BuildTrapezoids. Operates on the flattened
+        // s_flat vertex list, using s_loopStart to keep each closed loop's
+        // edges from wrapping into the next loop. The next-vertex of edge e
+        // is e+1, except at a loop's last vertex where it wraps back to that
+        // loop's first vertex.
+        private static int EdgeCount() => s_flat.Count;
+
+        // Index of the "next" vertex for edge e, respecting loop boundaries.
+        private static int NextOf(int e)
+        {
+            // Find the loop containing e (loops are contiguous, ascending).
+            for (int l = 0; l + 1 < s_loopStart.Count; l++)
+            {
+                int lo = s_loopStart[l];
+                int hi = s_loopStart[l + 1]; // one-past-last of this loop
+                if (e >= lo && e < hi)
+                    return (e + 1 < hi) ? e + 1 : lo;
+            }
+            return e; // shouldn't happen
+        }
+
+        private static void BuildTrapezoidsMulti(List<int> outTris, int firstVert)
+        {
+            int n = EdgeCount();
+
+            // 1. Scanline Ys: every vertex Y + every edge-edge crossing Y
+            //    across ALL loops (loops can cross each other too).
+            s_ys.Clear();
+            for (int i = 0; i < n; i++) s_ys.Add(s_flat[i].y);
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 a1 = s_flat[i], a2 = s_flat[NextOf(i)];
+                for (int j = i + 1; j < n; j++)
+                {
+                    Vector2 b1 = s_flat[j], b2 = s_flat[NextOf(j)];
+                    if (TryIntersect(a1, a2, b1, b2, out Vector2 ip))
+                        s_ys.Add(ip.y);
+                }
+            }
+            s_ys.Sort();
+            DedupeSorted(s_ys, 1e-6f);
+
+            int stripCount = s_ys.Count - 1;
+            if (stripCount <= 0) return;
+
+            for (int si = 0; si < stripCount; si++)
+            {
+                float yLo = s_ys[si];
+                float yHi = s_ys[si + 1];
+                float yMid = (yLo + yHi) * 0.5f;
+
+                s_active.Clear();
+                s_eventX.Clear();
+                for (int e = 0; e < n; e++)
+                {
+                    Vector2 a = s_flat[e], b = s_flat[NextOf(e)];
+                    float eyLo = Mathf.Min(a.y, b.y);
+                    float eyHi = Mathf.Max(a.y, b.y);
+                    if (eyLo > yLo + 1e-7f) continue;
+                    if (eyHi < yHi - 1e-7f) continue;
+                    if (eyHi - eyLo < 1e-7f) continue;
+                    s_active.Add(e);
+                    float xMid = XAt(a, b, yMid);
+                    s_eventX.Add(new EdgeX { x = xMid, edge = e });
+                }
+                if (s_eventX.Count < 2) continue;
+
+                for (int k = 1; k < s_eventX.Count; k++)
+                {
+                    var key = s_eventX[k];
+                    int m = k - 1;
+                    while (m >= 0 && s_eventX[m].x > key.x) { s_eventX[m + 1] = s_eventX[m]; m--; }
+                    s_eventX[m + 1] = key;
+                }
+
+                for (int p = 0; p + 1 < s_eventX.Count; p += 2)
+                {
+                    int eL = s_eventX[p].edge;
+                    int eR = s_eventX[p + 1].edge;
+                    Vector2 aL = s_flat[eL], bL = s_flat[NextOf(eL)];
+                    Vector2 aR = s_flat[eR], bR = s_flat[NextOf(eR)];
+                    float xLLo = XAt(aL, bL, yLo);
+                    float xLHi = XAt(aL, bL, yHi);
+                    float xRLo = XAt(aR, bR, yLo);
+                    float xRHi = XAt(aR, bR, yHi);
+
                     int v0 = s_emitted.Count;
                     s_emitted.Add(new Vector2(xLLo, yLo));
                     s_emitted.Add(new Vector2(xRLo, yLo));

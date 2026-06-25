@@ -51,6 +51,97 @@ namespace VMG.Core
             EmitAaRing(s_poly, OutsetWidthFor(s_poly), col, mb);
         }
 
+        // Multi-contour fill for shapes with holes (glyph counters like 'o',
+        // 'e', 'A'; donut SVGs). All contours are tessellated together with
+        // the even-odd rule so inner rings carve holes out of the outer ring,
+        // instead of each contour filling solid on its own. The AA ring is
+        // emitted per contour (each loop has its own boundary to antialias).
+        private static readonly List<List<Vector2>> s_multi = new List<List<Vector2>>(8);
+        private static readonly List<List<Vector2>> s_multiPool = new List<List<Vector2>>(8);
+
+        public static void BuildMulti(IReadOnlyList<VectorPath> contours, in FillStyle style, MeshBuffer mb)
+        {
+            if (!style.enabled) return;
+            if (contours == null || contours.Count == 0) return;
+
+            // Gather the closed, fillable contours as point lists.
+            ReturnMultiToPool();
+            s_multi.Clear();
+            for (int c = 0; c < contours.Count; c++)
+            {
+                var path = contours[c];
+                if (path == null || path.Count < 3 || !path.closed) continue;
+                var poly = RentPolyList();
+                for (int i = 0; i < path.Count; i++) poly.Add(path.nodes[i].position);
+                s_multi.Add(poly);
+            }
+            if (s_multi.Count == 0) return;
+
+            // Single contour: defer to the simple path (ear-clip fast path
+            // when non-self-intersecting) to avoid the scanline cost.
+            if (s_multi.Count == 1)
+            {
+                BuildFromPoly(s_multi[0], style, mb);
+                return;
+            }
+
+            Color32 col = style.color;
+            int firstVert = mb.VertexCount;
+            FillTessellator.TriangulateMulti(AsReadOnly(s_multi), mb.triangles, firstVert);
+            var emitted = FillTessellator.GetEmittedVertices();
+            for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col, 1f);
+
+            // AA ring per contour so every loop's boundary (outer edge and
+            // hole edges) gets the SDF distance ramp.
+            for (int c = 0; c < s_multi.Count; c++)
+            {
+                var poly = s_multi[c];
+                if (PolygonIsDegenerate(poly)) continue;
+                EmitAaRing(poly, OutsetWidthFor(poly), col, mb);
+            }
+        }
+
+        // Fill a single point-list contour (interior + AA ring). Shared by
+        // BuildMulti's single-contour fast case and reused via Build's body.
+        private static void BuildFromPoly(List<Vector2> poly, in FillStyle style, MeshBuffer mb)
+        {
+            if (poly.Count < 3) return;
+            Color32 col = style.color;
+            int firstVert = mb.VertexCount;
+            FillTessellator.Triangulate(poly, mb.triangles, firstVert);
+            var emitted = FillTessellator.GetEmittedVertices();
+            for (int i = 0; i < emitted.Count; i++) mb.AddVertex(emitted[i], col, 1f);
+            if (PolygonIsDegenerate(poly)) return;
+            EmitAaRing(poly, OutsetWidthFor(poly), col, mb);
+        }
+
+        // Tiny pooled-list helpers so BuildMulti doesn't allocate per call.
+        private static List<Vector2> RentPolyList()
+        {
+            if (s_multiPool.Count > 0)
+            {
+                var l = s_multiPool[s_multiPool.Count - 1];
+                s_multiPool.RemoveAt(s_multiPool.Count - 1);
+                l.Clear();
+                return l;
+            }
+            return new List<Vector2>(64);
+        }
+
+        private static void ReturnMultiToPool()
+        {
+            for (int i = 0; i < s_multi.Count; i++) s_multiPool.Add(s_multi[i]);
+            s_multi.Clear();
+        }
+
+        private static readonly List<IReadOnlyList<Vector2>> s_roView = new List<IReadOnlyList<Vector2>>(8);
+        private static IReadOnlyList<IReadOnlyList<Vector2>> AsReadOnly(List<List<Vector2>> src)
+        {
+            s_roView.Clear();
+            for (int i = 0; i < src.Count; i++) s_roView.Add(src[i]);
+            return s_roView;
+        }
+
         // A polygon counts as degenerate when either bounding dimension
         // collapses below a sub-pixel threshold. We only suppress the AA
         // ring (not the interior triangulation) — the interior is already

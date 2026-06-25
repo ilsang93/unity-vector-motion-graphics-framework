@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using VMG.Core;
@@ -8,7 +9,7 @@ namespace VMG.UI
     /// UGUI procedural vector renderer. MaskableGraphic so it interoperates
     /// with Mask / RectMask2D. All [SerializeField] fields below are keyframable
     /// from Animator / Timeline.
-    [AddComponentMenu("UI/VMG/Vector Image", 11)]
+    [AddComponentMenu("VMG/Rendering/Vector Image (UI)", 0)]
     [RequireComponent(typeof(CanvasRenderer))]
     [ExecuteAlways]
     public sealed class VectorImageGraphic : MaskableGraphic
@@ -312,6 +313,12 @@ namespace VMG.UI
         }
 
         private readonly VectorPath m_SvgPath = new VectorPath();
+        // Accumulates consecutive same-fill contours so a path element authored
+        // with holes (M..Z M..Z -> several subShapes sharing one fill) fills
+        // with the even-odd rule and the inner loops carve holes.
+        private readonly List<VectorPath> m_FillGroup = new List<VectorPath>(8);
+        private readonly List<VectorPath> m_PathPool = new List<VectorPath>(8);
+
         private void PopulateFromSvg(VertexHelper vh)
         {
             var asset = SvgAsset;
@@ -330,6 +337,13 @@ namespace VMG.UI
 
             int bezSamples = Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
                                        ? ShapeStack.Slot0.shape.bezierSamplesPerSegment : 16);
+
+            // Reset fill grouping (return any borrowed paths to the pool).
+            for (int i = 0; i < m_FillGroup.Count; i++) m_PathPool.Add(m_FillGroup[i]);
+            m_FillGroup.Clear();
+            FillStyle groupFill = default;
+            bool haveGroup = false;
+
             for (int s = 0; s < asset.subShapes.Count; s++)
             {
                 var sub = asset.subShapes[s];
@@ -351,8 +365,17 @@ namespace VMG.UI
 
                 if (sub.fill.enabled)
                 {
-                    var fill = sub.fill; fill.color *= color;
-                    FillMeshBuilder.Build(m_SvgPath, fill, m_Pipeline.mesh);
+                    // Start a new fill group whenever the fill style changes
+                    // (= a different path element). Contours that share a fill
+                    // are subpaths of one element and fill together so holes
+                    // render via even-odd.
+                    if (haveGroup && !SameFill(groupFill, sub.fill))
+                        FlushSvgFillGroup(groupFill);
+                    groupFill = sub.fill;
+                    haveGroup = true;
+                    var clone = RentPath();
+                    clone.CopyFrom(m_SvgPath);
+                    m_FillGroup.Add(clone);
                 }
                 if (sub.stroke.enabled)
                 {
@@ -361,6 +384,7 @@ namespace VMG.UI
                     StrokeMeshBuilder.Build(m_SvgPath, stroke, m_StrokeBuf);
                 }
             }
+            if (haveGroup) FlushSvgFillGroup(groupFill);
 
             // Normalize across the fit rect so the SVG's viewBox maps to [0,1].
             Rect uvRect = new Rect(origin.x, origin.y, fitSize.x, fitSize.y);
@@ -369,6 +393,36 @@ namespace VMG.UI
 
             AppendBufferToVH(m_Pipeline.mesh, vh);
             AppendBufferToVH(m_StrokeBuf, vh);
+        }
+
+        private void FlushSvgFillGroup(FillStyle fillStyle)
+        {
+            if (m_FillGroup.Count > 0 && fillStyle.enabled)
+            {
+                var fill = fillStyle; fill.color *= color;
+                FillMeshBuilder.BuildMulti(m_FillGroup, fill, m_Pipeline.mesh);
+            }
+            for (int i = 0; i < m_FillGroup.Count; i++) m_PathPool.Add(m_FillGroup[i]);
+            m_FillGroup.Clear();
+        }
+
+        private VectorPath RentPath()
+        {
+            if (m_PathPool.Count > 0)
+            {
+                var p = m_PathPool[m_PathPool.Count - 1];
+                m_PathPool.RemoveAt(m_PathPool.Count - 1);
+                return p;
+            }
+            return new VectorPath();
+        }
+
+        // Two fills belong to the same path element when color + gradient match.
+        private static bool SameFill(in FillStyle a, in FillStyle b)
+        {
+            if (a.useGradient != b.useGradient) return false;
+            if (a.color != b.color) return false;
+            return true;
         }
 
         private static void AppendBufferToVH(MeshBuffer mb, VertexHelper vh)

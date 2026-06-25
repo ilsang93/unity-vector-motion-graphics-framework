@@ -31,6 +31,9 @@ namespace VMG.Text
         public WiggleModifier Wiggle = WiggleModifier.Default();
         [Tooltip("Multiplies fill and stroke colors.")]
         public Color Tint = Color.white;
+        [Tooltip("Shader material for the vector mesh. Leave empty to use the default VMG/UI/VectorSDF material. " +
+                 "Vector text is a plain mesh, so any UI material works (e.g. a gradient or texture shader).")]
+        public Material Material;
 
         private const string ChildName = "__VMGVectorTextMesh";
 
@@ -81,6 +84,18 @@ namespace VMG.Text
             m_Graphic.enabled = true;
             m_Graphic.Owner = this;
             StretchFull(m_Graphic.rectTransform);
+
+            // Push the user material onto the companion Graphic. UGUI lets a
+            // Graphic.material override its defaultMaterial; assigning null
+            // falls the Graphic back to its SDF defaultMaterial automatically.
+            // Vector text is a plain mesh, so any UI material applies — this is
+            // the "treat text like an image and skin it" hook. Guard so we only
+            // dirty the material when it actually changes.
+            if (!ReferenceEquals(m_Graphic.material, Material) &&
+                !(Material == null && m_Graphic.material == m_Graphic.defaultMaterial))
+            {
+                m_Graphic.material = Material;
+            }
         }
 
         private static void StretchFull(RectTransform rt)

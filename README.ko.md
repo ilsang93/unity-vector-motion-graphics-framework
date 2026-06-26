@@ -115,8 +115,16 @@ Unity의 단일 그래픽 `Mask`를 넘어서는 동적·다중 소스 마스크
 - **`VMGMaskSource`** — 마스크 모양을 *기록*하는 그래픽
 - **`VMGMaskClient`** — 그 마스크를 통해 *드러나는* 그래픽
 
-여러 소스가 하나의 스텐실 채널로 결합되며(비트 슬롯 풀링), 표준 `Mask` 안에
-중첩됩니다. DSL로도 작성 가능: `mask <name> { … }` + `add … in=<maskName>`.
+여러 소스가 하나의 스텐실 채널로 결합되며(비트 슬롯 풀링), 표준 `Mask` 안에도,
+다른 `VMGMaskGroup` 안에도 중첩됩니다(안쪽 영역이 바깥 영역과 교집합). 그룹의
+**`Invert`** 를 켜면 소스 *안쪽* 대신 *바깥쪽* 이 드러납니다. `VMGMaskSource` 의
+`Show Source` 로 소스를 디버그용으로 표시할 수 있습니다. DSL로도 작성 가능:
+`mask <name> [invert] { … }` + `add … in=<maskName>`.
+
+> 커스텀 머티리얼은 표준 UGUI 스텐실 블록(`_Stencil`, `_StencilComp` …)을
+> 선언해야 마스킹됩니다 — `VMG/UI/VectorSDF` 또는 `UI/Default` 를 기반으로 하세요.
+> 스텐실 블록이 없는 머티리얼은 경고를 출력하고 클리핑 없이 렌더됩니다.
+> (월드 스페이스 `Vector Sprite Renderer` 는 스텐실 마스킹 대상이 아닙니다 — UI/Canvas 전용.)
 
 ### 선명한 엣지 (SDF 안티앨리어싱)
 

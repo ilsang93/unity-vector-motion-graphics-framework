@@ -85,6 +85,8 @@ namespace VMG.Text
             m_Graphic.Owner = this;
             StretchFull(m_Graphic.rectTransform);
 
+            ForwardMaskComponents();
+
             // Push the user material onto the companion Graphic. UGUI lets a
             // Graphic.material override its defaultMaterial; assigning null
             // falls the Graphic back to its SDF defaultMaterial automatically.
@@ -96,6 +98,55 @@ namespace VMG.Text
             {
                 m_Graphic.material = Material;
             }
+        }
+
+        // The vector glyph mesh lives on the __VMGVectorTextMesh CHILD, not on
+        // this (TMP) object — TMP owns this object's CanvasRenderer and we run
+        // it in DontRender mode. So a VMGMaskSource / VMGMaskClient that a user
+        // drops on THIS object would attach to TMP's suppressed graphic and do
+        // nothing. Mirror those mask markers onto the child mesh graphic so the
+        // mask actually affects the visible vector text.
+        //
+        // Standard Mask / RectMask2D on an ANCESTOR needs no mirroring — the
+        // child mesh graphic inherits clipping via MaskableGraphic. We still
+        // nudge RecalculateMasking() below so a mask added AFTER the text was
+        // built takes effect without a manual toggle.
+        private void ForwardMaskComponents()
+        {
+            if (m_Graphic == null) return;
+            var meshGO = m_Graphic.gameObject;
+
+            // Source.
+            var parentSrc = GetComponent<VMG.UI.VMGMaskSource>();
+            var childSrc = meshGO.GetComponent<VMG.UI.VMGMaskSource>();
+            if (parentSrc != null && parentSrc.enabled)
+            {
+                if (childSrc == null) childSrc = meshGO.AddComponent<VMG.UI.VMGMaskSource>();
+                childSrc.enabled = true;
+                // SetShowSource only dirties when the value actually changes, so
+                // this is cheap to call every EnsureGraphic.
+                childSrc.SetShowSource(parentSrc.ShowSource);
+            }
+            else if (childSrc != null)
+            {
+                childSrc.enabled = false;
+            }
+
+            // Client.
+            var parentCli = GetComponent<VMG.UI.VMGMaskClient>();
+            var childCli = meshGO.GetComponent<VMG.UI.VMGMaskClient>();
+            if (parentCli != null && parentCli.enabled)
+            {
+                if (childCli == null) childCli = meshGO.AddComponent<VMG.UI.VMGMaskClient>();
+                childCli.enabled = true;
+            }
+            else if (childCli != null)
+            {
+                childCli.enabled = false;
+            }
+
+            // Self-heal standard Mask / RectMask2D added after the text built.
+            m_Graphic.RecalculateMasking();
         }
 
         private static void StretchFull(RectTransform rt)

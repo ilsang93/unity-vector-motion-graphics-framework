@@ -115,9 +115,17 @@ Dynamic, multi-source masks beyond Unity's single-graphic `Mask`:
 - **`VMGMaskSource`** — any graphic that *writes* the mask shape
 - **`VMGMaskClient`** — graphics *revealed* through it
 
-Multiple sources combine into one stencil channel (bit-slot pooled), and it
-nests inside a standard `Mask`. Authorable from the DSL: `mask <name> { … }` +
-`add … in=<maskName>`.
+Multiple sources combine into one stencil channel (bit-slot pooled). It nests
+inside a standard `Mask` **and** inside another `VMGMaskGroup` (the inner region
+is intersected with the outer). Set **`Invert`** on the group to reveal clients
+*outside* the sources instead of inside. `VMGMaskSource.Show Source` makes a
+source visible for debugging. Authorable from the DSL: `mask <name> [invert] { … }`
++ `add … in=<maskName>`.
+
+> Custom materials must declare the standard UGUI stencil block (`_Stencil`,
+> `_StencilComp`, …) to be maskable — base them on `VMG/UI/VectorSDF` or
+> `UI/Default`. A material without it logs a warning and renders unclipped.
+> (World-space `Vector Sprite Renderer` is not stencil-masked — UI / Canvas only.)
 
 ### Crisp edges (SDF anti-aliasing)
 

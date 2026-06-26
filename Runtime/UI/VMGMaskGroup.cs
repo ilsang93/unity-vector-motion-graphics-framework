@@ -33,35 +33,32 @@ namespace VMG.UI
         static readonly int[] kBits = { 128, 64, 32, 16 };
         static int s_AllocatedMask;
 
+        [Tooltip("When true the mask shows the OUTSIDE of the source region: clients render everywhere INSIDE the parent region EXCEPT where a source stamped. Mirrors flipping a standard Mask's keep-inside to keep-outside. Default false = show inside the sources.")]
+        public bool Invert = false;
+
         [System.NonSerialized] int m_StencilBit;
         [System.NonSerialized] int m_ParentBits;
 
         /// 0 while the group is inactive. Otherwise one of {128, 64, 32, 16}.
         public int StencilId => m_StencilBit;
 
-        /// Lower-bit mask owned by ancestor standard Masks at OnEnable time.
-        /// E.g. depth=2 → 0b011. Source/Client combine this with StencilId
-        /// when configuring stencil state so VMG masking only takes effect
-        /// inside the ancestor Mask region.
+        /// All bits owned by ancestor regions that this group nests inside:
+        /// the lower-nibble bits of ancestor standard Masks PLUS the upper
+        /// bits of any ancestor VMGMaskGroup. Source/Client combine this with
+        /// StencilId so VMG masking only takes effect inside every enclosing
+        /// region (standard Mask ∩ parent VMG group ∩ this group).
         public int ParentBits => m_ParentBits;
 
         void OnEnable()
         {
-            var rootCanvas = MaskUtilities.FindRootSortOverrideCanvas(transform);
-            int parentDepth = MaskUtilities.GetStencilDepth(transform, rootCanvas);
-            if (parentDepth >= 8)
-            {
-                Debug.LogError($"[VMGMaskGroup] '{name}': ancestor stencil depth >= 8 — no bits left for VMG mask.", this);
-                m_ParentBits = 0;
-                m_StencilBit = 0;
-                NotifyChildren();
-                return;
-            }
-            m_ParentBits = (1 << parentDepth) - 1;
-            m_StencilBit = AllocateBit(m_ParentBits);
+            RecomputeParentBits();
             if (m_StencilBit == 0)
             {
-                Debug.LogError($"[VMGMaskGroup] '{name}': no free stencil bit (parent depth={parentDepth}, allocated mask=0x{s_AllocatedMask:X}); mask disabled.", this);
+                m_StencilBit = AllocateBit(m_ParentBits);
+                if (m_StencilBit == 0)
+                {
+                    Debug.LogError($"[VMGMaskGroup] '{name}': no free stencil bit (parentBits=0x{m_ParentBits:X}, allocated mask=0x{s_AllocatedMask:X}); mask disabled. Nesting is limited to 4 VMG mask groups plus ancestor standard Masks.", this);
+                }
             }
             NotifyChildren();
         }
@@ -77,8 +74,67 @@ namespace VMG.UI
             NotifyChildren();
         }
 
+#if UNITY_EDITOR
+        // Invert flips the client compare expression; like ShowSource on the
+        // source, the change is inert until the client graphics are marked
+        // material-dirty.
+        void OnValidate()
+        {
+            if (isActiveAndEnabled) NotifyChildren();
+        }
+#endif
+
+        /// Recompute the ancestor bit mask (standard Masks + ancestor VMG
+        /// groups). Does NOT reallocate this group's own bit. Callable to
+        /// repair stale parentBits after a reparent, and used by a parent
+        /// group to push a recompute down to nested groups once the parent
+        /// has claimed its own bit.
+        internal void RecomputeParentBits()
+        {
+            var rootCanvas = MaskUtilities.FindRootSortOverrideCanvas(transform);
+            int parentDepth = MaskUtilities.GetStencilDepth(transform, rootCanvas);
+            if (parentDepth >= 8)
+            {
+                Debug.LogError($"[VMGMaskGroup] '{name}': ancestor stencil depth >= 8 — no bits left for VMG mask.", this);
+                m_ParentBits = 0;
+                return;
+            }
+
+            int bits = (1 << parentDepth) - 1;
+
+            // Fold in the nearest ENABLED ancestor VMG group's full mask. Each
+            // group already folds its own ancestors into ParentBits, so the
+            // nearest ancestor's (StencilId | ParentBits) transitively carries
+            // the entire VMG-group chain above us. This is what makes a nested
+            // group's region the INTERSECTION of every enclosing group.
+            var parent = transform.parent;
+            if (parent != null)
+            {
+                var ancestor = parent.GetComponentInParent<VMGMaskGroup>(true);
+                if (ancestor != null && ancestor != this && ancestor.isActiveAndEnabled)
+                    bits |= ancestor.StencilId | ancestor.ParentBits;
+            }
+
+            m_ParentBits = bits;
+        }
+
         void NotifyChildren()
         {
+            // Nested VMG groups may have computed their parentBits before this
+            // group had its bit. Recompute them first so the chain is consistent
+            // regardless of component enable order. RecomputeParentBits only
+            // reads ancestor state (no graphic dirtying, no recursion into
+            // NotifyChildren), so this is a flat O(n) pass.
+            var nested = GetComponentsInChildren<VMGMaskGroup>(true);
+            for (int i = 0; i < nested.Length; i++)
+            {
+                if (nested[i] == null || nested[i] == this) continue;
+                nested[i].RecomputeParentBits();
+            }
+
+            // Then dirty every graphic under this group (includes those owned
+            // by nested groups) so all source/client materials rebuild against
+            // the now-consistent bit chain.
             var graphics = GetComponentsInChildren<Graphic>(true);
             for (int i = 0; i < graphics.Length; i++)
             {

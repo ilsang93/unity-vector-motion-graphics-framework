@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.45.0] - 2026-06-26
+
+**Masking overhaul** — standard-Mask / RectMask2D compatibility hardening,
+inside/outside (invert) regions, nested VMG mask groups, a working
+`Show Source` toggle, and a diagnostic for custom materials that can't be
+masked.
+
+### Added
+
+- **Invert (inside / outside) on `VMG Mask Group`.** New `Invert` toggle:
+  off (default) shows clients INSIDE the source region (previous behaviour);
+  on shows them OUTSIDE the sources, still clipped to any enclosing region.
+  Implemented purely in the client's stencil compare — no extra pass.
+  DSL: `mask <name> invert { ... }` (or `invert=true`).
+- **Nested `VMG Mask Group` composition.** A mask group placed inside
+  another now intersects: the inner group's region is clipped to the outer
+  group's region, exactly like nesting standard Unity `Mask`s. The inner
+  group inherits the outer group's stencil bits (`ParentBits` now folds in
+  ancestor VMG groups, not just ancestor standard Masks) and automatically
+  claims a different upper-nibble bit. Up to 4 nested VMG levels (plus
+  ancestor standard Masks).
+- **Stencil-capability warning for custom materials.** Assigning a material
+  whose shader lacks the UGUI stencil block (e.g. a ShaderGraph / Amplify FX
+  shader) to a masked graphic previously made masking *silently* fail — the
+  content rendered unclipped. VMG mask source/client now log a one-shot,
+  per-shader warning naming the material and shader, with the exact stencil
+  properties the shader needs.
+
+### Fixed
+
+- **`VMG Mask Source` → `Show Source` toggle now takes effect immediately.**
+  Toggling it (inspector or the new `SetShowSource(bool)` API) rebuilds the
+  source material so the debug colour appears/disappears at once. Previously
+  the change was inert until some unrelated event dirtied the material.
+- **Vector Text masks correctly under Mask / RectMask2D and VMG groups.**
+  The glyph mesh lives on a hidden child object, so a `VMG Mask Source` /
+  `VMG Mask Client` dropped on the `Vector Text (UI, TMP)` object itself used
+  to do nothing (it attached to TMP's suppressed graphic). Those markers are
+  now mirrored onto the child mesh graphic, and the child re-derives clipping
+  (`RecalculateMasking`) so a mask added *after* the text was built takes
+  effect without a manual toggle.
+
+### Known limits
+
+- World renderer (`Vector Sprite Renderer`) is still not stencil-masked —
+  `VMG/World/VectorSDF` has no stencil block (UI / Canvas only this round).
+
 ## [0.44.0] - 2026-06-26
 
 **OpenType-CFF (`.otf`) font support for Vector Text** + a **material slot

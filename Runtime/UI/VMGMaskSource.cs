@@ -56,6 +56,30 @@ namespace VMG.UI
             graphic?.SetMaterialDirty();
         }
 
+#if UNITY_EDITOR
+        // The ShowSource toggle changes the modified material's ColorWriteMask,
+        // but Unity won't re-run GetModifiedMaterial unless the graphic is
+        // marked material-dirty. Without this the inspector toggle appears
+        // inert (the source stays invisible / visible until some unrelated
+        // change forces a rebuild).
+        void OnValidate()
+        {
+            if (!isActiveAndEnabled) return;
+            EnsureFillEnabled();
+            graphic?.SetMaterialDirty();
+        }
+#endif
+
+        /// Runtime-safe ShowSource toggle (for script / animation). Sets the
+        /// field and forces the material to rebuild so the change takes effect
+        /// immediately, the same way the inspector toggle does in the editor.
+        public void SetShowSource(bool value)
+        {
+            if (ShowSource == value) return;
+            ShowSource = value;
+            graphic?.SetMaterialDirty();
+        }
+
         void EnsureFillEnabled()
         {
             var v = graphic as VectorImageGraphic;
@@ -76,6 +100,11 @@ namespace VMG.UI
             if (group == null || !group.isActiveAndEnabled) return baseMaterial;
             int bit = group.StencilId;
             if (bit <= 0) return baseMaterial;
+
+            // A material whose shader has no stencil block can't stamp the
+            // stencil buffer; warn (once per shader) so the failure is
+            // diagnosable instead of a silently-broken mask.
+            VMGMaskMaterialCheck.ValidateStencilCapable(baseMaterial, this, "mask source");
 
             int parentBits = group.ParentBits;
             int refValue = parentBits | bit;

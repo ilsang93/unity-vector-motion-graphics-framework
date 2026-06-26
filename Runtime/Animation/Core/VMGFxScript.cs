@@ -304,6 +304,9 @@ namespace VMG.Animation.Core
         {
             public string name;
             public List<Stmt> children = new List<Stmt>();
+            // Header attrs on the `mask <name> ... {` line. Currently:
+            //   invert | invert=true  → show OUTSIDE the source region.
+            public Dictionary<string, string> attrs = new Dictionary<string, string>();
         }
 
         internal sealed class AnimateStmt : Stmt
@@ -519,6 +522,9 @@ namespace VMG.Animation.Core
                 int line = p.Peek().line;
                 p.Consume(); // 'mask'
                 string name = p.ExpectIdent("mask name");
+                // Optional header attrs before the brace, e.g. `mask m invert {`.
+                // ParseAttributes stops at '{'.
+                var attrs = ParseAttributes(p);
                 p.ExpectSymbol("{");
                 var children = new List<Stmt>();
                 p.SkipNewlines();
@@ -532,7 +538,7 @@ namespace VMG.Animation.Core
                 }
                 p.ExpectSymbol("}");
                 p.EndStatement();
-                return new MaskStmt { line = line, name = name, children = children };
+                return new MaskStmt { line = line, name = name, children = children, attrs = attrs };
             }
 
             static AnimateStmt ParseAnimate(ParseState p)
@@ -1345,8 +1351,13 @@ namespace VMG.Animation.Core
                     // ApplyAdd's mask-client detection works for any nested
                     // `in=<this-mask>` references inside the block (not the
                     // common case, but supported).
-                    if (sub.Root != null && sub.Root.GetComponent<VMGMaskGroup>() == null)
-                        sub.Root.gameObject.AddComponent<VMGMaskGroup>();
+                    VMGMaskGroup grp = sub.Root != null ? sub.Root.GetComponent<VMGMaskGroup>() : null;
+                    if (sub.Root != null && grp == null)
+                        grp = sub.Root.gameObject.AddComponent<VMGMaskGroup>();
+
+                    // `invert` / `invert=true` → show OUTSIDE the source region.
+                    if (grp != null && s.attrs != null && s.attrs.TryGetValue("invert", out var inv))
+                        grp.Invert = ParseFlag(inv);
 
                     foreach (var c in s.children)
                     {

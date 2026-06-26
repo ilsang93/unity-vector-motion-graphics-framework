@@ -84,22 +84,28 @@ namespace VMG.Text
                 ReturnAll();
             }
 
-            // Gradients: recolor the fill / stroke verts across the text's
-            // union bounds (so both gradients share one coordinate frame),
-            // multiplied by tint. AddVertex stashed each vertex position in its
-            // UV, which ApplyGradient reads — so this runs on the raw buffers
-            // before any UV normalization. Mirrors VectorImageGraphic.
+            // Compute the text IMAGE bounds = the axis-aligned union of every
+            // fill + stroke vertex. This is the rect both the gradient frame
+            // and the texture-UV mapping use, so they share one coordinate
+            // frame. (Mirrors VectorImageGraphic's VertexUnionBounds.)
+            Rect bounds = UnionBounds(fillBuf, strokeBuf);
+
+            // Gradients first: AddVertex stashed each vertex position in its
+            // UV, which ApplyGradient reads — so it must run on the RAW
+            // position-as-UV buffers, BEFORE the UV normalization below.
             bool fillGrad = fillStyle.enabled && fillStyle.useGradient;
             bool strokeGrad = strokeStyle.enabled && strokeStyle.useGradient;
-            if (fillGrad || strokeGrad)
-            {
-                // Both renderers pass SEPARATE fill / stroke buffers, so each
-                // gradient recolors only its own verts. Bounds are the union so
-                // fill and stroke gradients share one coordinate frame.
-                Rect bounds = UnionBounds(fillBuf, strokeBuf);
-                if (fillGrad) fillBuf.ApplyGradient(fillStyle.gradient, bounds, tint, 0);
-                if (strokeGrad) strokeBuf.ApplyGradient(strokeStyle.gradient, bounds, tint, 0);
-            }
+            if (fillGrad) fillBuf.ApplyGradient(fillStyle.gradient, bounds, tint, 0);
+            if (strokeGrad) strokeBuf.ApplyGradient(strokeStyle.gradient, bounds, tint, 0);
+
+            // Normalize UV0 so a texture/image material lays [0,1] across the
+            // TEXT IMAGE area (the glyph union bounds) rather than across raw
+            // glyph-local coordinates. Without this an image material samples
+            // its texture in font units and reads as "stretched over the whole
+            // canvas". The SDF distance channel rides UV1 and is untouched, so
+            // the default SDF material keeps its zoom-independent edge AA.
+            fillBuf.NormalizeUVsToRect(bounds);
+            strokeBuf.NormalizeUVsToRect(bounds);
         }
 
         private static Rect UnionBounds(MeshBuffer a, MeshBuffer b)

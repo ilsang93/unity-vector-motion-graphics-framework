@@ -25,6 +25,17 @@ on the Canvas variant**.
   Note: a non-SDF custom material renders without the SDF edge AA — base
   it on `VMG/UI/VectorSDF` to keep both.
 
+### Fixed
+
+- **Vector-text UV0 now maps across the text IMAGE area, not raw glyph
+  coordinates.** An image/texture material on vector text previously
+  sampled in font units (so a texture read as "stretched across the whole
+  canvas"). UV0 is now normalized [0,1] over the glyph union bounds
+  (matching `VectorImageGraphic`), so image materials map onto the text as
+  expected. The SDF distance channel rides UV1 and is untouched, so the
+  default material's edge AA is unaffected. Applies to both the Canvas and
+  World variants.
+
 ### Changed
 
 - `TtfOutlineParser` now exposes `HasOutlines` (either source usable),

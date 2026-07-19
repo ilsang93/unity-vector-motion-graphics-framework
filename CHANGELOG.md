@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.46.0] - 2026-07-20
+
+**Draw-on group** — reveal many stroked shapes in sequence from a single
+progress value, for "magic circle" / handwriting effects.
+
+### Added
+
+- **`VMG Draw-On Group` component** (`VMG/Utility/Draw-On Group`). Drives the
+  `Trim` modifier of many vector renderers from one `Progress` scalar so a
+  group of strokes appears to be drawn on in order. Distribution is
+  **arc-length weighted**: each stroke owns a share of the 0..1 range
+  proportional to its own path length, so the pen moves at constant apparent
+  speed instead of racing through long strokes and crawling on short ones.
+  - `Overlap` (0..0.95) blends neighbouring strokes — 0 is strictly
+    sequential, 0.3 starts the next stroke when the previous is 70% drawn.
+  - `Strokes` list sets an explicit draw order; leave it empty to collect
+    renderers from children in hierarchy order. `ReverseOrder` flips it.
+  - `DeactivateUntilDrawn` optionally hides not-yet-started strokes.
+  - Owns no playback state by design — animate `Progress` from VMGAnimator,
+    an AnimationClip or a `.vmgfx` timeline, so the clock stays in one place.
+  - Works with both `VectorImageGraphic` (UGUI) and `VectorSpriteRenderer`
+    (world). SVG-backed renderers have no procedural path to measure and fall
+    back to an even weight.
+  - Note: `Trim` is a stroke-only modifier (fill skips it so closed shapes
+    survive the slice), so this reveals **stroked** line art.
+
+### Changed
+
+- **New `VMG.Runtime.Utility` assembly.** `Runtime/Utility/` previously lived
+  in the root `VMG.Runtime` assembly, which `VMG.Runtime.UI` and
+  `VMG.Runtime.World` reference — so a utility component touching both
+  renderers would have formed a cycle. Utility now has its own asmdef sitting
+  above them. `VMGBillboard` moves into it; its namespace (`VMG.Utility`) and
+  API are unchanged, so user code is unaffected.
+
 ## [0.45.0] - 2026-06-26
 
 **Masking overhaul** — standard-Mask / RectMask2D compatibility hardening,

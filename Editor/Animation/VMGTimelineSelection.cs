@@ -2,6 +2,11 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using VMG.Animation;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.EditorTools.Animation
 {
@@ -116,12 +121,18 @@ namespace VMG.EditorTools.Animation
             return false;
         }
 
-        static readonly Dictionary<int, VMGTimelineSelection> s_PerAnimator = new Dictionary<int, VMGTimelineSelection>();
+        static readonly Dictionary<VMGObjectId, VMGTimelineSelection> s_PerAnimator = new Dictionary<VMGObjectId, VMGTimelineSelection>();
+#if UNITY_6000_5_OR_NEWER
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetEntityId();
+#else
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetInstanceID();
+#endif
+
 
         public static VMGTimelineSelection For(VMGAnimator animator)
         {
             if (animator == null) return new VMGTimelineSelection();
-            int id = animator.GetInstanceID();
+            VMGObjectId id = ObjectId(animator);
             if (!s_PerAnimator.TryGetValue(id, out var sel))
             {
                 sel = new VMGTimelineSelection();

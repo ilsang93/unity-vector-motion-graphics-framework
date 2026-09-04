@@ -1,4 +1,9 @@
 using System.Collections.Generic;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.Animation.Core
 {
@@ -35,11 +40,11 @@ namespace VMG.Animation.Core
         // baseline is set once and stays.
         internal struct RevertKey : System.IEquatable<RevertKey>
         {
-            public int targetInstanceID;
+            public VMGObjectId targetInstanceID;
             public string fieldPath;
             public bool Equals(RevertKey other) => targetInstanceID == other.targetInstanceID && fieldPath == other.fieldPath;
             public override bool Equals(object obj) => obj is RevertKey k && Equals(k);
-            public override int GetHashCode() => unchecked(targetInstanceID * 397) ^ (fieldPath != null ? fieldPath.GetHashCode() : 0);
+            public override int GetHashCode() => unchecked(targetInstanceID.GetHashCode() * 397) ^ (fieldPath != null ? fieldPath.GetHashCode() : 0);
         }
         internal struct RevertEntry
         {

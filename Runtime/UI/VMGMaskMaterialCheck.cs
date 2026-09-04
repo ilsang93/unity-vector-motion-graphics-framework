@@ -1,5 +1,10 @@
 using System.Collections.Generic;
 using UnityEngine;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.UI
 {
@@ -16,7 +21,12 @@ namespace VMG.UI
     /// diagnosable instead of mysterious.
     internal static class VMGMaskMaterialCheck
     {
-        static readonly HashSet<int> s_Warned = new HashSet<int>();
+        static readonly HashSet<VMGObjectId> s_Warned = new HashSet<VMGObjectId>();
+#if UNITY_6000_5_OR_NEWER
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetEntityId();
+#else
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetInstanceID();
+#endif
 
         /// Returns true if the material can participate in stencil masking.
         /// Logs a one-shot warning (keyed by shader) when it can't.
@@ -25,7 +35,7 @@ namespace VMG.UI
             if (mat == null || mat.shader == null) return true; // null → default mat handles it
             if (mat.HasProperty("_Stencil") && mat.HasProperty("_StencilComp")) return true;
 
-            int key = mat.shader.GetInstanceID();
+            VMGObjectId key = ObjectId(mat.shader);
             if (s_Warned.Add(key))
             {
                 Debug.LogWarning(

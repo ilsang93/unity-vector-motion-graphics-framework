@@ -3,6 +3,11 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using VMG.Animation;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.EditorTools.Animation
 {
@@ -12,12 +17,18 @@ namespace VMG.EditorTools.Animation
         bool m_Recording;
         bool m_Registered;
 
-        static readonly Dictionary<int, VMGEditorRecord> s_PerAnimator = new Dictionary<int, VMGEditorRecord>();
+        static readonly Dictionary<VMGObjectId, VMGEditorRecord> s_PerAnimator = new Dictionary<VMGObjectId, VMGEditorRecord>();
+#if UNITY_6000_5_OR_NEWER
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetEntityId();
+#else
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetInstanceID();
+#endif
+
 
         public static VMGEditorRecord For(VMGAnimator animator)
         {
             if (animator == null) return null;
-            int id = animator.GetInstanceID();
+            VMGObjectId id = ObjectId(animator);
             if (!s_PerAnimator.TryGetValue(id, out var rec) || rec == null)
             {
                 rec = new VMGEditorRecord();

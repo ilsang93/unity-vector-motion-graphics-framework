@@ -3,6 +3,11 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using VMG.Animation;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.EditorTools.Animation
 {
@@ -130,7 +135,13 @@ namespace VMG.EditorTools.Animation
         readonly List<Row> m_Rows = new List<Row>();
         // Per-clip collapse state. Keyed by (clip instance id, groupKey). Lives
         // in memory only — re-opening the window starts everything expanded.
-        readonly Dictionary<int, HashSet<string>> m_CollapsedByClip = new Dictionary<int, HashSet<string>>();
+        readonly Dictionary<VMGObjectId, HashSet<string>> m_CollapsedByClip = new Dictionary<VMGObjectId, HashSet<string>>();
+#if UNITY_6000_5_OR_NEWER
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetEntityId();
+#else
+        static VMGObjectId ObjectId(UnityEngine.Object o) => o.GetInstanceID();
+#endif
+
 
         const float k_GroupCaretWidth = 14f;
 
@@ -641,7 +652,7 @@ namespace VMG.EditorTools.Animation
 
         HashSet<string> GetCollapsedSet(VMGAnimationClip clip)
         {
-            int id = clip.GetInstanceID();
+            VMGObjectId id = ObjectId(clip);
             if (!m_CollapsedByClip.TryGetValue(id, out var set))
             {
                 set = new HashSet<string>();

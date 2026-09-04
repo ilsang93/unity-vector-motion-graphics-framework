@@ -1,5 +1,10 @@
 using System;
 using UnityEngine;
+#if UNITY_6000_5_OR_NEWER
+using VMGObjectId = UnityEngine.EntityId;
+#else
+using VMGObjectId = System.Int32;
+#endif
 
 namespace VMG.Animation
 {
@@ -29,7 +34,11 @@ namespace VMG.Animation
         // a single (target, channel) slot regardless of how many writers point
         // to it. The TargetInstanceID dies with the UnityEngine.Object so the
         // key naturally collapses when the host is destroyed.
-        public int TargetInstanceID => m_Target != null ? m_Target.GetInstanceID() : 0;
+#if UNITY_6000_5_OR_NEWER
+        public VMGObjectId TargetInstanceID => m_Target != null ? m_Target.GetEntityId() : EntityId.None;
+#else
+        public VMGObjectId TargetInstanceID => m_Target != null ? m_Target.GetInstanceID() : 0;
+#endif
         public string FieldPath => m_FieldPath;
         public VMGChannelType ChannelType => m_Type;
         public UnityEngine.Object TargetObject => m_Target;

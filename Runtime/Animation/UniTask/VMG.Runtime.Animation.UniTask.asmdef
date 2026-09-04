@@ -2,7 +2,8 @@
     "name": "VMG.Runtime.Animation.UniTask",
     "rootNamespace": "VMG.Animation.UniTaskSupport",
     "references": [
-        "VMG.Runtime.Animation"
+        "VMG.Runtime.Animation",
+        "UniTask"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

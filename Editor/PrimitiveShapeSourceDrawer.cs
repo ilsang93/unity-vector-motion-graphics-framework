@@ -119,8 +119,17 @@ namespace VMG.EditorTools
                     if (slotProp == null) continue;
                     float h = SlotHeight(slotProp);
                     Rect slotRect = new Rect(r.x, r.y, r.width, h);
-                    DrawSlot(slotRect, slotProp, i);
+                    int op = DrawSlot(slotRect, slotProp, i, active);
                     r.y += h + pad;
+                    if (op != 0)
+                    {
+                        // Mutating slots invalidates the loop's remaining
+                        // slotProps, so apply the edit and bail out of this
+                        // OnGUI pass — the inspector repaints immediately.
+                        if (op > 0) InsertNodeAt(property, activeNodeCountProp, i + 1);
+                        else RemoveNodeAt(property, activeNodeCountProp, i);
+                        break;
+                    }
                 }
             }
 
@@ -128,23 +137,35 @@ namespace VMG.EditorTools
             EditorGUI.EndProperty();
         }
 
-        private static void DrawSlot(Rect rect, SerializedProperty slotProp, int index)
+        /// Draws one node slot. Returns +1 when the user clicked the
+        /// insert button (insert AFTER this slot), -1 when they clicked
+        /// delete, 0 otherwise. The caller performs the mutation so this
+        /// stays free of SerializedProperty shifting.
+        private static int DrawSlot(Rect rect, SerializedProperty slotProp, int index, int activeCount)
         {
             float line = EditorGUIUtility.singleLineHeight;
             float pad = EditorGUIUtility.standardVerticalSpacing;
+            int op = 0;
 
             var posProp = slotProp.FindPropertyRelative("position");
             var inProp = slotProp.FindPropertyRelative("inTangent");
             var outProp = slotProp.FindPropertyRelative("outTangent");
             var typeProp = slotProp.FindPropertyRelative("type");
 
-            // Header bar — slot index and node type dropdown.
+            // Header bar — slot index, node type dropdown, and the
+            // per-slot insert / delete buttons on the right.
             Rect header = new Rect(rect.x, rect.y, rect.width, SlotHeaderHeight);
             EditorGUI.LabelField(new Rect(header.x, header.y, 70f, header.height),
                 new GUIContent("Node " + index));
+
+            float btnW = 22f;
+            Rect insRect = new Rect(header.xMax - btnW * 2f - 2f, header.y, btnW, header.height);
+            Rect delRect = new Rect(header.xMax - btnW, header.y, btnW, header.height);
+            float typeW = header.width - 72f - btnW * 2f - 6f;
+
             EditorGUI.BeginChangeCheck();
             EditorGUI.PropertyField(
-                new Rect(header.x + 72f, header.y, header.width - 72f, header.height),
+                new Rect(header.x + 72f, header.y, Mathf.Max(40f, typeW), header.height),
                 typeProp, GUIContent.none);
             // Switching type AWAY from Bezier/Smooth must clear the
             // tangents — otherwise lingering non-zero values keep
@@ -174,6 +195,20 @@ namespace VMG.EditorTools
                 EditorGUI.PropertyField(new Rect(rect.x, y, rect.width, line), outProp, new GUIContent("Out Tangent"));
             }
             EditorGUI.indentLevel--;
+
+            // Buttons come last so they sit on top of the indent-level
+            // fields and keep their exact header rects.
+            using (new EditorGUI.DisabledScope(activeCount >= PrimitiveShapeSource.MaxFreeNodes))
+            {
+                if (GUI.Button(insRect, new GUIContent("+", "Insert a new node right after this one, at the midpoint of the following segment. Shifts later slots."), EditorStyles.miniButtonLeft))
+                    op = 1;
+            }
+            using (new EditorGUI.DisabledScope(activeCount <= 0))
+            {
+                if (GUI.Button(delRect, new GUIContent("×", "Delete this node. Shifts later slots down."), EditorStyles.miniButtonRight))
+                    op = -1;
+            }
+            return op;
         }
 
         private static float SlotHeight(SerializedProperty slotProp)
@@ -252,6 +287,187 @@ namespace VMG.EditorTools
             slot.FindPropertyRelative("inTangent").vector2Value = Vector2.zero;
             slot.FindPropertyRelative("outTangent").vector2Value = Vector2.zero;
             slot.FindPropertyRelative("type").enumValueIndex = (int)NodeType.Corner;
+        }
+
+        // --- Mid-list insert / delete -------------------------------
+        //
+        // The 64 slots are fixed named fields, so "insert" means copying
+        // every later slot one place along. That renames what each slot
+        // holds, which is exactly what makes existing AnimationClip
+        // curves (bound to NodeNN by name) point at the wrong node
+        // afterwards. WarnIfCurvesWouldShift gives the user a chance to
+        // back out before that happens.
+
+        private static void CopySlot(SerializedProperty shapeProp, int from, int to)
+        {
+            var src = shapeProp.FindPropertyRelative(SlotName(from));
+            var dst = shapeProp.FindPropertyRelative(SlotName(to));
+            if (src == null || dst == null) return;
+            dst.FindPropertyRelative("position").vector2Value = src.FindPropertyRelative("position").vector2Value;
+            dst.FindPropertyRelative("inTangent").vector2Value = src.FindPropertyRelative("inTangent").vector2Value;
+            dst.FindPropertyRelative("outTangent").vector2Value = src.FindPropertyRelative("outTangent").vector2Value;
+            dst.FindPropertyRelative("type").enumValueIndex = src.FindPropertyRelative("type").enumValueIndex;
+        }
+
+        /// Inserts a node at `index`, seeded at the midpoint of the
+        /// segment it splits, shifting slots [index, active) up by one.
+        internal static void InsertNodeAt(SerializedProperty shapeProp,
+                                          SerializedProperty activeProp, int index)
+        {
+            int active = Mathf.Clamp(activeProp.intValue, 0, PrimitiveShapeSource.MaxFreeNodes);
+            if (active >= PrimitiveShapeSource.MaxFreeNodes) return;
+            if (index < 0 || index > active) return;
+            if (!WarnIfCurvesWouldShift(shapeProp, index, "inserting")) return;
+
+            // Seed position BEFORE shifting, while index-1 / index still
+            // name the nodes that bracket the new one.
+            Vector2 seed = MidpointFor(shapeProp, index, active);
+
+            for (int i = active; i > index; i--) CopySlot(shapeProp, i - 1, i);
+
+            var slot = shapeProp.FindPropertyRelative(SlotName(index));
+            if (slot != null)
+            {
+                slot.FindPropertyRelative("position").vector2Value = seed;
+                slot.FindPropertyRelative("inTangent").vector2Value = Vector2.zero;
+                slot.FindPropertyRelative("outTangent").vector2Value = Vector2.zero;
+                // Inherit the preceding node's type so inserting into a
+                // bezier run doesn't drop a hard corner into a curve.
+                int prev = index - 1;
+                if (prev >= 0)
+                {
+                    var prevSlot = shapeProp.FindPropertyRelative(SlotName(prev));
+                    if (prevSlot != null)
+                        slot.FindPropertyRelative("type").enumValueIndex =
+                            prevSlot.FindPropertyRelative("type").enumValueIndex;
+                }
+                else
+                {
+                    slot.FindPropertyRelative("type").enumValueIndex = (int)NodeType.Corner;
+                }
+            }
+            activeProp.intValue = active + 1;
+        }
+
+        /// Midpoint of the segment that the new node at `index` splits.
+        /// Falls back to offsetting the neighbour when there is no real
+        /// segment (index at the open end, or a single-node path).
+        private static Vector2 MidpointFor(SerializedProperty shapeProp, int index, int active)
+        {
+            if (active == 0) return Vector2.zero;
+
+            var freeClosedProp = shapeProp.FindPropertyRelative("freeClosed");
+            bool closed = freeClosedProp != null && freeClosedProp.boolValue;
+
+            int prev = index - 1;
+            int next = index;
+            if (next >= active) next = closed ? 0 : -1;
+            if (prev < 0) prev = closed ? active - 1 : -1;
+
+            if (prev >= 0 && next >= 0 && prev != next)
+                return (SlotPos(shapeProp, prev) + SlotPos(shapeProp, next)) * 0.5f;
+
+            // Open-ended: place the node one default spacing beyond the
+            // single neighbour so it is visible and pickable.
+            int anchorIdx = prev >= 0 ? prev : next;
+            if (anchorIdx < 0) return Vector2.zero;
+            Vector2 anchor = SlotPos(shapeProp, anchorIdx);
+            return anchor + new Vector2(DefaultNodeSpacing, 0f);
+        }
+
+        private static Vector2 SlotPos(SerializedProperty shapeProp, int i)
+        {
+            var slot = shapeProp.FindPropertyRelative(SlotName(i));
+            return slot == null ? Vector2.zero : slot.FindPropertyRelative("position").vector2Value;
+        }
+
+        /// Removes the node at `index`, shifting slots (index, active)
+        /// down by one and clearing the vacated tail slot.
+        internal static void RemoveNodeAt(SerializedProperty shapeProp,
+                                          SerializedProperty activeProp, int index)
+        {
+            int active = Mathf.Clamp(activeProp.intValue, 0, PrimitiveShapeSource.MaxFreeNodes);
+            if (active <= 0 || index < 0 || index >= active) return;
+            if (!WarnIfCurvesWouldShift(shapeProp, index, "deleting")) return;
+
+            for (int i = index; i < active - 1; i++) CopySlot(shapeProp, i + 1, i);
+            ClearSlot(shapeProp, active - 1);
+            activeProp.intValue = active - 1;
+        }
+
+        /// Returns true when it is safe to proceed. Scans every
+        /// AnimationClip on the target's animator for curves bound to a
+        /// node slot at or after `index` — those are the ones a shift
+        /// would silently re-target — and asks for confirmation.
+        /// Unity cannot remap them, so the only honest options are
+        /// "proceed and fix the curves by hand" or "cancel".
+        private static bool WarnIfCurvesWouldShift(SerializedProperty shapeProp, int index, string verb)
+        {
+            int affected = CountAffectedCurves(shapeProp, index);
+            if (affected <= 0) return true;
+
+            string slotName = index < 10 ? "Node0" + index : "Node" + index;
+            return EditorUtility.DisplayDialog(
+                "Animation curves will be re-targeted",
+                affected + " animation curve(s) are bound to node slots at or after " + slotName + ".\n\n" +
+                "Slots are keyframed by name, so " + verb + " a node here shifts those curves onto " +
+                "different nodes. Unity cannot remap them automatically - you will need to fix " +
+                "the affected curves by hand.\n\nProceed anyway?",
+                "Proceed", "Cancel");
+        }
+
+        private static int CountAffectedCurves(SerializedProperty shapeProp, int index)
+        {
+            var target = shapeProp.serializedObject.targetObject as Component;
+            if (target == null) return 0;
+
+            // Walk up to the Animator that would drive this component;
+            // clips live there, not on the renderer.
+            var animator = target.GetComponentInParent<Animator>();
+            AnimationClip[] clips = null;
+            if (animator != null && animator.runtimeAnimatorController != null)
+                clips = animator.runtimeAnimatorController.animationClips;
+            if (clips == null || clips.Length == 0) return 0;
+
+            // Curve paths look like "ShapeStack.Slot0.shape.Node03.position.x".
+            // We only need the "NodeNN" token and whether NN >= index.
+            int count = 0;
+            foreach (var clip in clips)
+            {
+                if (clip == null) continue;
+                var bindings = AnimationUtility.GetCurveBindings(clip);
+                foreach (var b in bindings)
+                {
+                    int slot = SlotIndexInBinding(b.propertyName);
+                    if (slot >= index) count++;
+                }
+            }
+            return count;
+        }
+
+        /// Extracts NN from a binding path containing ".NodeNN." - returns
+        /// -1 when the binding is not a free-node channel.
+        private static int SlotIndexInBinding(string propertyName)
+        {
+            if (string.IsNullOrEmpty(propertyName)) return -1;
+            const string token = "Node";
+            int at = propertyName.IndexOf(token, System.StringComparison.Ordinal);
+            while (at >= 0)
+            {
+                int d = at + token.Length;
+                if (d + 1 < propertyName.Length &&
+                    char.IsDigit(propertyName[d]) && char.IsDigit(propertyName[d + 1]))
+                {
+                    // Must be a whole token: the char after the 2 digits
+                    // is '.' (or end), so "Node12" matches but "Node123"
+                    // does not.
+                    int after = d + 2;
+                    if (after >= propertyName.Length || propertyName[after] == '.')
+                        return (propertyName[d] - '0') * 10 + (propertyName[d + 1] - '0');
+                }
+                at = propertyName.IndexOf(token, at + 1, System.StringComparison.Ordinal);
+            }
+            return -1;
         }
 
         private static void ClearSlot(SerializedProperty shapeProp, int index)

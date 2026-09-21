@@ -14,8 +14,12 @@ namespace VMG.UI
     [ExecuteAlways]
     public sealed class VectorImageGraphic : MaskableGraphic
     {
-        [Tooltip("Optional SVG asset. When set, procedural shape/modifiers/style are bypassed. Object reference: NOT keyframable from AnimationClip — swap via script.")]
+        [Tooltip("Optional SVG asset. When set, the procedural ShapeStack and its Fill/Stroke styles are bypassed — but Round Corners / Wiggle / Trim still apply, and the Svg Fill/Stroke Override fields below can replace the asset's colors. Object reference: NOT keyframable from AnimationClip — swap via script.")]
         public VMGShapeAsset SvgAsset;
+        [Tooltip("Replaces the fill colors baked into the SVG asset. Tint alone only multiplies, so this is how a black-filled icon gets recolored. Ignored when no SvgAsset is set. Keyframable.")]
+        public SvgStyleOverride SvgFillOverride = SvgStyleOverride.Default();
+        [Tooltip("Replaces the stroke colors (and optionally widths) baked into the SVG asset. Ignored when no SvgAsset is set. Keyframable.")]
+        public SvgStyleOverride SvgStrokeOverride = SvgStyleOverride.Default();
         public ShapeStack ShapeStack = ShapeStack.Default();
         public StrokeStyle Stroke = StrokeStyle.Default;
         public FillStyle Fill = new FillStyle { enabled = true, color = Color.white };
@@ -46,6 +50,8 @@ namespace VMG.UI
         private Color m_PrevGraphicColor;
         private bool m_PrevFitToRect;
         private VMGShapeAsset m_PrevSvgAsset;
+        private SvgStyleOverride m_PrevSvgFill;
+        private SvgStyleOverride m_PrevSvgStroke;
         private Texture m_PrevTexture;
         private bool m_HasSnapshot;
 
@@ -159,10 +165,19 @@ namespace VMG.UI
             if (!ReferenceEquals(m_PrevTexture, Texture)) return true;
             if (m_PrevGraphicColor != color) return true;
             if (m_PrevFitToRect != FitToRect) return true;
-            // When an SvgAsset is assigned the procedural pipeline is
-            // bypassed entirely, so the shape / modifier / fill / stroke
-            // fields don't influence the mesh. Skip their comparison.
-            if (SvgAsset != null) return false;
+            // With an SvgAsset the procedural ShapeStack and its own
+            // Fill/Stroke are bypassed, but modifiers and the SVG color
+            // overrides DO reach the mesh — compare those, then stop.
+            // (Wiggle already forced a rebuild above when enabled.)
+            if (SvgAsset != null)
+            {
+                if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
+                if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
+                if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
+                if (!SvgStyleOverride.Same(m_PrevSvgFill, SvgFillOverride)) return true;
+                if (!SvgStyleOverride.Same(m_PrevSvgStroke, SvgStrokeOverride)) return true;
+                return false;
+            }
             if (!VectorRendererEquality.Same(m_PrevStack, ShapeStack)) return true;
             if (!VectorRendererEquality.Same(m_PrevStroke, Stroke)) return true;
             if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
@@ -183,6 +198,8 @@ namespace VMG.UI
             m_PrevGraphicColor = color;
             m_PrevFitToRect = FitToRect;
             m_PrevSvgAsset = SvgAsset;
+            m_PrevSvgFill = SvgFillOverride;
+            m_PrevSvgStroke = SvgStrokeOverride;
             m_PrevTexture = Texture;
             m_HasSnapshot = true;
         }
@@ -313,6 +330,9 @@ namespace VMG.UI
         }
 
         private readonly VectorPath m_SvgPath = new VectorPath();
+        // Separate buffer so trimming the stroke does not destroy the
+        // closed contour the fill group still needs.
+        private readonly VectorPath m_SvgTrimPath = new VectorPath();
         // Accumulates consecutive same-fill contours so a path element authored
         // with holes (M..Z M..Z -> several subShapes sharing one fill) fills
         // with the even-odd rule and the inner loops carve holes.
@@ -337,6 +357,19 @@ namespace VMG.UI
 
             int bezSamples = Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
                                        ? ShapeStack.Slot0.shape.bezierSamplesPerSegment : 16);
+
+            // Modifiers run in the SAME order as the procedural pipeline
+            // (RoundCorner -> Wiggle -> Trim) and are applied per
+            // sub-shape, so each contour is modified in its own
+            // arc-length space. That matches AE's "Trim Multiple Shapes:
+            // Individually"; a whole-icon sweep would need one shared
+            // length budget across every sub-shape.
+            //
+            // Modifier geometry is in FITTED (post-scale) space so radius
+            // / intensity / spacing read in the same units as the
+            // procedural path, not in raw viewBox units.
+            float wiggleTime = WiggleTime();
+            bool anyModifier = RoundCorners.Enabled || Wiggle.Enabled || Trim.Enabled;
 
             // Reset fill grouping (return any borrowed paths to the pool).
             for (int i = 0; i < m_FillGroup.Count; i++) m_PathPool.Add(m_FillGroup[i]);
@@ -363,12 +396,21 @@ namespace VMG.UI
                     m_SvgPath.nodes[i] = n;
                 }
 
+                if (RoundCorners.Enabled) RoundCorners.Apply(m_SvgPath);
+                if (Wiggle.Enabled) Wiggle.Apply(m_SvgPath, wiggleTime);
+
                 if (sub.fill.enabled)
                 {
                     // Start a new fill group whenever the fill style changes
                     // (= a different path element). Contours that share a fill
                     // are subpaths of one element and fill together so holes
                     // render via even-odd.
+                    //
+                    // Grouping is keyed on the AUTHORED fill, never the
+                    // override: with an override on, every sub-shape
+                    // would otherwise collapse into one group and
+                    // separate shapes would carve holes out of each
+                    // other via even-odd.
                     if (haveGroup && !SameFill(groupFill, sub.fill))
                         FlushSvgFillGroup(groupFill);
                     groupFill = sub.fill;
@@ -379,17 +421,39 @@ namespace VMG.UI
                 }
                 if (sub.stroke.enabled)
                 {
-                    var stroke = sub.stroke; stroke.color *= color;
+                    // Trim applies to the stroke only, exactly as in the
+                    // procedural path: the fill keeps the closed contour
+                    // so slicing it would not produce a sensible area.
+                    if (Trim.Enabled)
+                    {
+                        m_SvgTrimPath.CopyFrom(m_SvgPath);
+                        Trim.Apply(m_SvgTrimPath);
+                    }
+                    var strokePath = Trim.Enabled ? m_SvgTrimPath : m_SvgPath;
+
+                    var stroke = SvgStrokeOverride.ApplyTo(sub.stroke);
+                    stroke.color *= color;
                     stroke.width *= scale;
-                    StrokeMeshBuilder.Build(m_SvgPath, stroke, m_StrokeBuf);
+                    StrokeMeshBuilder.Build(strokePath, stroke, m_StrokeBuf);
                 }
             }
             if (haveGroup) FlushSvgFillGroup(groupFill);
 
+            // Gradient bake. Mirrors the procedural branch: both gradients
+            // share one coordinate frame so fill and stroke line up. An
+            // override gradient spans the whole SVG rather than each
+            // sub-shape, which is what "gradient across this icon" means.
+            // Runs before UV normalization since ApplyGradient reads each
+            // vertex's original position from its UV placeholder.
+            Rect fitRect = new Rect(origin.x, origin.y, fitSize.x, fitSize.y);
+            if (SvgFillOverride.enabled && SvgFillOverride.useGradient)
+                m_Pipeline.mesh.ApplyGradient(SvgFillOverride.gradient, fitRect, color, 0);
+            if (SvgStrokeOverride.enabled && SvgStrokeOverride.useGradient)
+                m_StrokeBuf.ApplyGradient(SvgStrokeOverride.gradient, fitRect, color, 0);
+
             // Normalize across the fit rect so the SVG's viewBox maps to [0,1].
-            Rect uvRect = new Rect(origin.x, origin.y, fitSize.x, fitSize.y);
-            m_Pipeline.mesh.NormalizeUVsToRect(uvRect);
-            m_StrokeBuf.NormalizeUVsToRect(uvRect);
+            m_Pipeline.mesh.NormalizeUVsToRect(fitRect);
+            m_StrokeBuf.NormalizeUVsToRect(fitRect);
 
             AppendBufferToVH(m_Pipeline.mesh, vh);
             AppendBufferToVH(m_StrokeBuf, vh);
@@ -399,7 +463,8 @@ namespace VMG.UI
         {
             if (m_FillGroup.Count > 0 && fillStyle.enabled)
             {
-                var fill = fillStyle; fill.color *= color;
+                var fill = SvgFillOverride.ApplyTo(fillStyle);
+                fill.color *= color;
                 FillMeshBuilder.BuildMulti(m_FillGroup, fill, m_Pipeline.mesh);
             }
             for (int i = 0; i < m_FillGroup.Count; i++) m_PathPool.Add(m_FillGroup[i]);

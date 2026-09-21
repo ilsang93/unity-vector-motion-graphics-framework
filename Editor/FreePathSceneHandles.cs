@@ -40,7 +40,21 @@ namespace VMG.EditorTools
             var shapeProp = serializedObject.FindProperty(shapePropertyPath);
             if (shapeProp == null) return false;
 
+            var activeProp = shapeProp.FindPropertyRelative("activeNodeCount");
             int activeCount = Mathf.Clamp(shape.activeNodeCount, 0, PrimitiveShapeSource.MaxFreeNodes);
+
+            // Segment midpoint "+" markers. Drawn before the node
+            // handles so a node sitting on top of a midpoint wins the
+            // click (moving a node is the far more common gesture).
+            if (activeProp != null &&
+                DrawSegmentInsertHandles(space, shape, shapeProp, activeProp, activeCount) >= 0)
+            {
+                serializedObject.ApplyModifiedProperties();
+                return true;
+            }
+
+            Event evt = Event.current;
+            bool deleteMode = IsDeleteClick(evt);
             bool any = false;
             for (int i = 0; i < activeCount; i++)
             {
@@ -65,6 +79,21 @@ namespace VMG.EditorTools
                 Handles.color = NodeOutlineColor;
                 Handles.RectangleHandleCap(0, worldPos, Quaternion.identity,
                     size * NodeHandleSize * NodeOutlineScale, EventType.Repaint);
+
+                // Delete gesture: Ctrl/Cmd-click or right-click a node.
+                // Checked before the move handle so the click is consumed
+                // rather than starting a drag.
+                if (deleteMode && activeProp != null && activeCount > 0)
+                {
+                    float pickDist = HandleUtility.DistanceToCircle(worldPos, size * NodeHandleSize);
+                    if (pickDist <= 0f)
+                    {
+                        PrimitiveShapeSourceDrawer.RemoveNodeAt(shapeProp, activeProp, i);
+                        serializedObject.ApplyModifiedProperties();
+                        evt.Use();
+                        return true;
+                    }
+                }
 
                 // Node position handle.
                 Handles.color = NodeColor;
@@ -115,6 +144,75 @@ namespace VMG.EditorTools
                 serializedObject.ApplyModifiedProperties();
             }
             return any;
+        }
+
+        // --- Mid-path insert / delete in the SceneView ---------------
+        //
+        // Insert: click the small "+" disc drawn at each segment
+        // midpoint. Delete: Ctrl/Cmd-click (or right-click) a node.
+        // Both route through the same SerializedProperty shift the
+        // inspector drawer uses, so Undo and the AnimationClip warning
+        // behave identically from either surface.
+
+        private static readonly Color InsertHandleColor = new Color(0.45f, 1f, 0.5f, 0.9f);
+        private const float InsertHandleSize = 0.055f;
+
+        /// Draws a midpoint "+" on every segment and performs an insert
+        /// when one is clicked. Returns the index the new node was
+        /// inserted at, or -1 when nothing was clicked.
+        private static int DrawSegmentInsertHandles(Transform space, PrimitiveShapeSource shape,
+                                                    SerializedProperty shapeProp,
+                                                    SerializedProperty activeProp, int activeCount)
+        {
+            if (activeCount < 1) return -1;
+            if (activeCount >= PrimitiveShapeSource.MaxFreeNodes) return -1;
+
+            int segCount = shape.freeClosed ? activeCount : activeCount - 1;
+            if (segCount < 1) return -1;
+
+            Color prev = Handles.color;
+            Handles.color = InsertHandleColor;
+            int inserted = -1;
+            for (int seg = 0; seg < segCount; seg++)
+            {
+                int a = seg;
+                int b = (seg + 1) % activeCount;
+                Vector2 pa = SlotPosition(shapeProp, a);
+                Vector2 pb = SlotPosition(shapeProp, b);
+                Vector3 mid = space.TransformPoint((pa + pb) * 0.5f);
+                float size = HandleUtility.GetHandleSize(mid);
+
+                // A button, not a FreeMoveHandle: a midpoint marker is a
+                // click target, and dragging it would fight the node
+                // handles that sit nearby.
+                if (Handles.Button(mid, Quaternion.identity,
+                                   size * InsertHandleSize, size * InsertHandleSize,
+                                   Handles.DotHandleCap))
+                {
+                    // New node lands between a and b -> slot index a+1.
+                    PrimitiveShapeSourceDrawer.InsertNodeAt(shapeProp, activeProp, a + 1);
+                    inserted = a + 1;
+                    break;
+                }
+            }
+            Handles.color = prev;
+            return inserted;
+        }
+
+        private static Vector2 SlotPosition(SerializedProperty shapeProp, int i)
+        {
+            var slot = shapeProp.FindPropertyRelative(SlotName(i));
+            return slot == null ? Vector2.zero : slot.FindPropertyRelative("position").vector2Value;
+        }
+
+        /// True when the current event is a delete gesture on a node:
+        /// Ctrl/Cmd + left click, or a right click.
+        private static bool IsDeleteClick(Event e)
+        {
+            if (e == null) return false;
+            if (e.type != EventType.MouseDown) return false;
+            if (e.button == 1) return true;
+            return e.button == 0 && (e.control || e.command);
         }
 
         public static bool Draw(Transform space, PrimitiveShapeSource shape, UnityEngine.Object owner, string undoLabel)

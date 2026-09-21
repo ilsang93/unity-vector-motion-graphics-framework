@@ -27,6 +27,8 @@ namespace VMG.EditorTools
         private SerializedProperty m_Texture;
         private SerializedProperty m_SortingLayerID;
         private SerializedProperty m_SortingOrder;
+        private SerializedProperty m_SvgFillOverride;
+        private SerializedProperty m_SvgStrokeOverride;
 
         private void OnEnable()
         {
@@ -44,6 +46,8 @@ namespace VMG.EditorTools
             m_Texture = serializedObject.FindProperty("Texture");
             m_SortingLayerID = serializedObject.FindProperty("SortingLayerID");
             m_SortingOrder = serializedObject.FindProperty("SortingOrder");
+            m_SvgFillOverride = serializedObject.FindProperty("SvgFillOverride");
+            m_SvgStrokeOverride = serializedObject.FindProperty("SvgStrokeOverride");
         }
 
         public override void OnInspectorGUI()
@@ -70,13 +74,42 @@ namespace VMG.EditorTools
                         "Depth is enabled — stroke alignment is rendered as Inner regardless of the field above so the outline stays inside the 3D silhouette.",
                         MessageType.Info);
                 }
-                EditorGUILayout.PropertyField(m_RoundCorners, true);
-                EditorGUILayout.PropertyField(m_Trim, true);
-                EditorGUILayout.PropertyField(m_Wiggle, true);
             }
+
             if (hasSvg)
             {
-                EditorGUILayout.HelpBox("SVG asset assigned. ShapeStack, modifiers, and per-renderer fill/stroke are ignored — each sub-shape's own fill/stroke from the SVG is used. Tint multiplies the result.", MessageType.Info);
+                EditorGUILayout.HelpBox(
+                    "SVG asset assigned. ShapeStack and the per-renderer Fill/Stroke above are ignored — "
+                    + "each sub-shape keeps its own fill/stroke from the SVG. Use the Svg Color Override "
+                    + "section to replace those colors, and the modifiers below to trim/wiggle/round the "
+                    + "imported contours.", MessageType.Info);
+
+                if (DepthEnabled())
+                {
+                    EditorGUILayout.HelpBox(
+                        "Depth extrusion is not applied to SVG assets — the mesh stays flat. "
+                        + "Extruding imported contours would need per-contour side walls that respect "
+                        + "the even-odd holes, which the depth builder does not do yet.",
+                        MessageType.Warning);
+                }
+
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Svg Color Override", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(m_SvgFillOverride, true);
+                EditorGUILayout.PropertyField(m_SvgStrokeOverride, true);
+            }
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Modifiers", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(m_RoundCorners, true);
+            EditorGUILayout.PropertyField(m_Trim, true);
+            EditorGUILayout.PropertyField(m_Wiggle, true);
+            if (hasSvg)
+            {
+                EditorGUILayout.HelpBox(
+                    "Modifiers apply to each SVG sub-shape independently, so Trim runs over every "
+                    + "contour's own length (AE's \"Trim Multiple Shapes: Individually\"), not one sweep "
+                    + "across the whole icon.", MessageType.None);
             }
 
             EditorGUILayout.PropertyField(m_Tint);

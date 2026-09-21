@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.47.0] - 2026-09-21
+
+**SVG assets become first-class** — modifiers, color overrides, and mid-path
+node editing. Previously an assigned `SvgAsset` bypassed the whole procedural
+pipeline, so Trim / Wiggle / Round Corners silently did nothing and the
+asset's authored colors could only be multiplied, never replaced.
+
+### Added
+
+- **Modifiers now apply to SVG assets.** `RoundCorners`, `Wiggle` and `Trim`
+  run over each imported contour in both `VectorImageGraphic` and
+  `VectorSpriteRenderer`, in the same order as the procedural pipeline
+  (RoundCorner -> Wiggle -> Trim) and in fitted space, so radius / intensity
+  read in the same units as a procedural shape.
+  - Modifiers apply **per sub-shape**, so `Trim` runs over each contour's own
+    arc length — After Effects' *Trim Multiple Shapes: Individually*. A single
+    sweep across a whole icon is not what this does.
+  - As in the procedural path, `Trim` affects the **stroke only**; the fill
+    keeps its closed contour.
+- **`SvgFillOverride` / `SvgStrokeOverride`** (new `SvgStyleOverride` struct)
+  on both renderers. Tint and `Graphic.color` only *multiply*, so a black fill
+  stays black; these **replace** the asset's colors instead. Supports a solid
+  color or a two-stop gradient spanning the whole SVG, plus an opt-in
+  `overrideWidth` for strokes. All fields keyframable. Off by default.
+- **Mid-list node insert / delete for FreePath.** `PrimitiveShapeSource` gains
+  `InsertNodeAt` / `InsertNodeOnSegment` / `RemoveNodeAt`, surfaced as per-node
+  `+` / `x` buttons in the inspector and, in the SceneView, a midpoint `+`
+  marker on every segment plus Ctrl/Cmd-click (or right-click) to delete a node.
+  - Inserting or deleting **shifts slot indices**, which re-targets any
+    existing AnimationClip curve bound to a later `NodeNN`. Unity cannot remap
+    these, so both surfaces count the affected curves and ask for confirmation
+    first.
+- `MeshBuffer.EnsureFrontNormals()` — back-fills front-facing normals for
+  buffers whose 2D builders emitted none.
+
+### Fixed
+
+- **SVG meshes carried no normals.** Flat fill/stroke builders emit none, and
+  `MeshBuffer.ApplyTo` skips `SetNormals` unless every vertex has one, so any
+  lighting-aware material was undefined on an SVG while working on procedural
+  shapes. World-space SVG meshes now get front-facing normals.
+- **SVG holes rendered solid in world space.** `VectorSpriteRenderer` filled
+  each sub-shape independently, so a path authored with holes
+  (`M..Z M..Z`) came out solid — while the same asset rendered correctly in
+  UGUI. It now groups consecutive same-fill contours and fills them with the
+  even-odd rule, matching `VectorImageGraphic`.
+- **Gradients never applied to SVG assets** in either renderer. Override
+  gradients are now baked across the SVG's fitted bounds, so fill and stroke
+  share one coordinate frame.
+- Renderer dirty-flags treated every modifier and color field as irrelevant
+  whenever an `SvgAsset` was set, so changes to them produced no rebuild. The
+  SVG branch now compares the fields that actually reach the mesh.
+
+### Known limitations
+
+- **Depth extrusion is not applied to SVG assets**; the mesh stays flat.
+  Extruding imported contours needs per-contour side walls that respect
+  even-odd holes, which the depth builder does not do yet. The inspector warns
+  when Depth is enabled alongside an SVG asset.
+
+### Notes
+
+- Fill grouping is keyed on the **authored** fill color, never the override.
+  Keying it on the final color would collapse every sub-shape into one group
+  and make separate shapes carve holes out of each other via even-odd.
+- No migration needed: every new field defaults to off, so existing scenes
+  render exactly as before.
+
 ## [0.46.0] - 2026-07-20
 
 **Draw-on group** — reveal many stroked shapes in sequence from a single

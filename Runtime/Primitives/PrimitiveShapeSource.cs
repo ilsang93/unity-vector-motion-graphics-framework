@@ -188,6 +188,76 @@ namespace VMG.Core
             }
         }
 
+        /// Inserts a node at `index`, shifting every later slot one
+        /// place toward the end, and bumps activeNodeCount. `index` may
+        /// equal the current count (append). Returns false when the
+        /// shape is already at MaxFreeNodes or the index is out of
+        /// range — callers should surface that to the user rather than
+        /// silently dropping the edit.
+        ///
+        /// NOTE: shifting renames slots, so any AnimationClip curve
+        /// bound to NodeNN at or after `index` now drives a different
+        /// node. Editor callers warn before doing this; there is no way
+        /// to remap curves from runtime code.
+        public bool InsertNodeAt(int index, FlatNode value)
+        {
+            int count = Mathf.Clamp(activeNodeCount, 0, MaxFreeNodes);
+            if (count >= MaxFreeNodes) return false;
+            if (index < 0 || index > count) return false;
+
+            // Walk backwards so each slot is read before it is overwritten.
+            for (int i = count; i > index; i--) SetSlot(i, GetSlot(i - 1));
+            SetSlot(index, value);
+            activeNodeCount = count + 1;
+            return true;
+        }
+
+        /// Inserts a node at the midpoint of the segment that *ends* at
+        /// `index` — i.e. between node index-1 and index — which is the
+        /// natural result of clicking that segment in the SceneView.
+        /// Tangents start at zero and the type is inherited from the
+        /// preceding node. For index 0 on a closed path the segment
+        /// wraps from the last node.
+        public bool InsertNodeOnSegment(int index)
+        {
+            int count = Mathf.Clamp(activeNodeCount, 0, MaxFreeNodes);
+            if (count == 0) return InsertNodeAt(0, default);
+            if (index < 0 || index > count) return false;
+
+            int prev = index - 1;
+            if (prev < 0) prev = freeClosed ? count - 1 : 0;
+            int next = index % count;
+            FlatNode a = GetSlot(prev);
+            FlatNode b = GetSlot(next);
+
+            var mid = new FlatNode
+            {
+                position = (a.position + b.position) * 0.5f,
+                inTangent = Vector2.zero,
+                outTangent = Vector2.zero,
+                type = a.type,
+            };
+            return InsertNodeAt(index, mid);
+        }
+
+        /// Removes the node at `index`, shifting later slots down and
+        /// decrementing activeNodeCount. The vacated tail slot is
+        /// cleared so a later append starts from clean data. Returns
+        /// false for an out-of-range index or an empty shape.
+        ///
+        /// Carries the same AnimationClip caveat as InsertNodeAt.
+        public bool RemoveNodeAt(int index)
+        {
+            int count = Mathf.Clamp(activeNodeCount, 0, MaxFreeNodes);
+            if (count == 0) return false;
+            if (index < 0 || index >= count) return false;
+
+            for (int i = index; i < count - 1; i++) SetSlot(i, GetSlot(i + 1));
+            SetSlot(count - 1, default);
+            activeNodeCount = count - 1;
+            return true;
+        }
+
         public void Build(VectorPath outPath)
         {
             Normalize();

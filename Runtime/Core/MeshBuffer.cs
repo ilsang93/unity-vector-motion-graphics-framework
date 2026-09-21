@@ -147,6 +147,33 @@ namespace VMG.Core
         /// Promote every flat 2D vertex to a 3D vertex with the given Z
         /// and a front-facing normal. Used when merging a buffer built by
         /// a 2D-only emitter (e.g. StrokeMeshBuilder) into a depth-aware
+        /// Back-fills front-facing normals for every vertex from
+        ///  on, so a buffer whose 2D builders emitted none
+        /// still satisfies ApplyTo's all-or-nothing normal rule. No-op
+        /// when the buffer is already fully normal-aware.
+        ///
+        /// Needed because the flat (non-extruded) fill and stroke
+        /// builders add vertices without normals; a mesh missing them
+        /// renders undefined under any lighting-aware material.
+        /// Back-fills front-facing normals so a buffer whose 2D builders
+        /// emitted none still satisfies ApplyTo's all-or-nothing normal
+        /// rule. No-op when the buffer is already fully normal-aware.
+        ///
+        /// Needed because the flat (non-extruded) fill and stroke
+        /// builders add vertices without normals; a mesh missing them
+        /// renders undefined under any lighting-aware material.
+        public void EnsureFrontNormals()
+        {
+            int vc = vertices.Count;
+            if (vc == 0 || normals.Count == vc) return;
+            // A partially-normalled buffer cannot be repaired by
+            // appending — the existing entries may belong to any vertex
+            // range — so rebuild the whole list, preserving what is
+            // already there and defaulting the rest to front-facing.
+            if (normals.Count > vc) normals.RemoveRange(vc, normals.Count - vc);
+            while (normals.Count < vc) normals.Add(new Vector3(0f, 0f, 1f));
+        }
+
         /// combined buffer — keeps normals.Count == vertices.Count.
         public void PromoteToZWithFrontNormal(float z)
         {

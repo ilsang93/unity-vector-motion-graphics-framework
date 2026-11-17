@@ -138,6 +138,15 @@ namespace VMG.Core
             bool closed = path.closed && src.Count >= 3;
             if (closed && src[0] == src[src.Count - 1]) src.RemoveAt(src.Count - 1);
             if (src.Count < 2) { m_PathPool.Add(src); return; }
+            // Bezier / round-corner tessellation leaves runs of nearly
+            // collinear points; offset + union cost grows with the point
+            // count (and with self-crossings), so drop every point closer
+            // than 5% of the AA band (0.025% of the extent) to the simplified line.
+            if (src.Count > 4)
+            {
+                var simple = Clipper.SimplifyPath(src, m_Band * 0.05 * m_Scale, closed);
+                if (!ReferenceEquals(simple, src)) { src.Clear(); src.AddRange(simple); }
+            }
 
             double delta = (style.width * 0.5 - inset) * m_Scale;
             // Clipper measures the miter against the half width, VMG against

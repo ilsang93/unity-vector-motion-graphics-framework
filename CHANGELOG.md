@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.48.1] - 2026-11-18
+
+### Changed
+
+- **`MergeStrokeOverlaps` is much cheaper on dense paths.** Center strokes are
+  simplified before offsetting (points within 0.025% of the drawing's extent
+  of the simplified line are dropped — well below a pixel), which cuts the
+  offset/union work and the merged vertex count. Measured per rebuild, editor
+  Release: a 27-node bezier FreePath with per-frame Trim 16 ms -> 3.9 ms
+  (legacy 2.1 ms); skull icon 9.5 ms -> 3.4 ms (legacy 0.67 ms). Merged vertex
+  counts drop further (skull 2859 -> 1620). Overlap removal is unchanged.
+  Occasional worst-case frames (GC from Clipper's per-call allocations) remain,
+  so the toggle stays off by default.
+
 ## [0.48.0] - 2026-11-18
 
 **Overlap-free semi-transparent strokes.** A stroke mesh used to be one

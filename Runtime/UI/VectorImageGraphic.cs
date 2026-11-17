@@ -57,7 +57,17 @@ namespace VMG.UI
         private SvgStyleOverride m_PrevSvgStroke;
         private Texture m_PrevTexture;
         private bool m_PrevMergeStrokes;
+        private bool m_PrevGpuTrim;
+        private Rect m_PrevRect;
         private bool m_HasSnapshot;
+
+        // GPU trim (see WantsGpuTrim). The shared default material can't
+        // carry a per-graphic trim window, so this graphic renders through
+        // its own copy of whatever material the modifier chain hands it.
+        private static readonly int s_TrimID = Shader.PropertyToID("_VMGTrim");
+        private bool m_GpuTrim;
+        private Material m_TrimMat;
+        private Material m_TrimMatSource;
 
         public override Texture mainTexture => Texture != null ? Texture : base.mainTexture;
 
@@ -84,6 +94,7 @@ namespace VMG.UI
         {
             base.OnEnable();
             EnsureCanvasUv1Channel();
+            m_GpuTrim = WantsGpuTrim();
             m_HasSnapshot = false; // force a rebuild on the first LateUpdate
             SetVerticesDirty();
         }
@@ -134,7 +145,65 @@ namespace VMG.UI
         /// detected on the next frame.
         private void LateUpdate()
         {
+            bool gpu = WantsGpuTrim();
+            if (gpu != m_GpuTrim)
+            {
+                m_GpuTrim = gpu;
+                SetMaterialDirty();
+            }
             if (IsMeshInputDirty()) SetVerticesDirty();
+            if (m_GpuTrim && m_TrimMat != null)
+            {
+                Vector4 v = TrimVector();
+                if (m_TrimMat.GetVector(s_TrimID) != v) m_TrimMat.SetVector(s_TrimID, v);
+            }
+        }
+
+        // GPU trim: the stroke mesh is built once, untrimmed, with each
+        // vertex's arc position in UV1.y, and the VMG SDF shader cuts it from
+        // _VMGTrim, so animating start / end / offset costs no rebuild.
+        // Falls back to the CPU TrimPathModifier when strokes are merged
+        // (a union has no per-vertex arc position) or when the material's
+        // shader doesn't read _VMGTrim (custom materials).
+        private bool WantsGpuTrim()
+        {
+            if (!Trim.Enabled || MergeStrokeOverlaps) return false;
+            // The shader cuts the stroke square; the CPU trim re-caps the
+            // cut ends with the stroke's own cap. Only Butt looks the same.
+            if (SvgAsset != null ? !SvgAsset.AllStrokeCapsButt() : Stroke.cap != LineCap.Butt) return false;
+            var mat = material;
+            return mat != null && mat.HasProperty(s_TrimID);
+        }
+
+        private Vector4 TrimVector() => new Vector4(Trim.start, Trim.end, Trim.offset, 1f);
+
+        public override Material GetModifiedMaterial(Material baseMaterial)
+        {
+            var mat = base.GetModifiedMaterial(baseMaterial);
+            if (!m_GpuTrim || mat == null || !mat.HasProperty(s_TrimID)) return mat;
+            if (m_TrimMat == null || m_TrimMatSource != mat)
+            {
+                DestroyTrimMaterial();
+                m_TrimMat = new Material(mat) { name = mat.name + " (VMG Trim)", hideFlags = HideFlags.HideAndDontSave };
+                m_TrimMatSource = mat;
+            }
+            m_TrimMat.SetVector(s_TrimID, TrimVector());
+            return m_TrimMat;
+        }
+
+        private void DestroyTrimMaterial()
+        {
+            if (m_TrimMat == null) return;
+            if (Application.isPlaying) Destroy(m_TrimMat);
+            else DestroyImmediate(m_TrimMat);
+            m_TrimMat = null;
+            m_TrimMatSource = null;
+        }
+
+        protected override void OnDestroy()
+        {
+            DestroyTrimMaterial();
+            base.OnDestroy();
         }
 
         // Edit-mode-safe clock for wiggle: Time.time only advances in Play,
@@ -160,16 +229,17 @@ namespace VMG.UI
             // changes, scaler updates and layout-group fixups can shift
             // the rect (size, position, or both) without an
             // OnRectTransformDimensionsChange callback in the same frame,
-            // so a value-equality gate misses those cases. Skip the gate
-            // entirely when FitToRect is on — the rebuild cost is no
-            // worse than 0.36.0-pre and the visual stays correct.
-            // FitToRect=false (user-driven sizing) keeps the gate.
-            if (FitToRect) return true;
+            // so compare the rect itself every frame.
+            if (FitToRect && rectTransform.rect != m_PrevRect) return true;
             if (!ReferenceEquals(m_PrevSvgAsset, SvgAsset)) return true;
             if (!ReferenceEquals(m_PrevTexture, Texture)) return true;
             if (m_PrevGraphicColor != color) return true;
             if (m_PrevFitToRect != FitToRect) return true;
             if (m_PrevMergeStrokes != MergeStrokeOverlaps) return true;
+            if (m_PrevGpuTrim != m_GpuTrim) return true;
+            // Trim only reaches the mesh on the CPU path; on the GPU path
+            // the window lives in the material.
+            if (!m_GpuTrim && !VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
             // With an SvgAsset the procedural ShapeStack and its own
             // Fill/Stroke are bypassed, but modifiers and the SVG color
             // overrides DO reach the mesh — compare those, then stop.
@@ -177,7 +247,6 @@ namespace VMG.UI
             if (SvgAsset != null)
             {
                 if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
-                if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
                 if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
                 if (!SvgStyleOverride.Same(m_PrevSvgFill, SvgFillOverride)) return true;
                 if (!SvgStyleOverride.Same(m_PrevSvgStroke, SvgStrokeOverride)) return true;
@@ -187,7 +256,6 @@ namespace VMG.UI
             if (!VectorRendererEquality.Same(m_PrevStroke, Stroke)) return true;
             if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
             if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
-            if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
             if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
             return false;
         }
@@ -207,6 +275,8 @@ namespace VMG.UI
             m_PrevSvgStroke = SvgStrokeOverride;
             m_PrevTexture = Texture;
             m_PrevMergeStrokes = MergeStrokeOverlaps;
+            m_PrevGpuTrim = m_GpuTrim;
+            m_PrevRect = rectTransform.rect;
             m_HasSnapshot = true;
         }
 
@@ -276,7 +346,7 @@ namespace VMG.UI
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
             if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
-            if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
+            if (Trim.Enabled && !m_GpuTrim) Trim.Apply(m_Pipeline.workingPath);
             if (Stroke.enabled)
             {
                 var stroke = Stroke;
@@ -288,6 +358,7 @@ namespace VMG.UI
                     m_StrokeMerger.Add(m_Pipeline.workingPath, stroke);
                     m_StrokeMerger.Flush(m_StrokeBuf);
                 }
+                else if (m_GpuTrim) StrokeMeshBuilder.BuildWithArcLength(m_Pipeline.workingPath, stroke, m_StrokeBuf);
                 else StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
@@ -443,17 +514,19 @@ namespace VMG.UI
                     // Trim applies to the stroke only, exactly as in the
                     // procedural path: the fill keeps the closed contour
                     // so slicing it would not produce a sensible area.
-                    if (Trim.Enabled)
+                    bool cpuTrim = Trim.Enabled && !m_GpuTrim;
+                    if (cpuTrim)
                     {
                         m_SvgTrimPath.CopyFrom(m_SvgPath);
                         Trim.Apply(m_SvgTrimPath);
                     }
-                    var strokePath = Trim.Enabled ? m_SvgTrimPath : m_SvgPath;
+                    var strokePath = cpuTrim ? m_SvgTrimPath : m_SvgPath;
 
                     var stroke = SvgStrokeOverride.ApplyTo(sub.stroke);
                     stroke.color *= color;
                     stroke.width *= scale;
                     if (MergeStrokeOverlaps) m_StrokeMerger.Add(strokePath, stroke);
+                    else if (m_GpuTrim) StrokeMeshBuilder.BuildWithArcLength(strokePath, stroke, m_StrokeBuf);
                     else StrokeMeshBuilder.Build(strokePath, stroke, m_StrokeBuf);
                 }
             }
@@ -521,7 +594,7 @@ namespace VMG.UI
                 var v = mb.vertices[i];
                 var c = mb.colors[i];
                 var uv = mb.uvs[i];
-                Vector2 uv1 = hasUv1 ? mb.uv1s[i] : new Vector2(1f, 0f);
+                Vector2 uv1 = hasUv1 ? mb.uv1s[i] : new Vector2(1f, MeshBuffer.NoArc);
                 // VertexHelper has no (pos, color, uv0, uv1) overload, so
                 // populate a UIVertex and push that — same allocation cost
                 // as the 3-arg form (vh keeps internal SoA arrays).

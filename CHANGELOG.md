@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.49.0] - 2026-11-18
+
+**GPU Trim Paths.** Animating Trim used to rebuild the whole stroke mesh on
+the CPU every frame. Now the stroke mesh is built once, untrimmed, with each
+vertex's arc-length position, and the VMG SDF shaders cut it from the trim
+window — Trim start / end / offset changes cost no rebuild.
+
+### Added
+
+- **GPU trim** on `VectorSpriteRenderer` and `VectorImageGraphic`, automatic,
+  no new fields. Used when all of these hold; otherwise the CPU
+  `TrimPathModifier` runs exactly as before:
+  - Trim is enabled and `MergeStrokeOverlaps` is off (a merged outline has
+    no per-vertex arc position).
+  - Stroke cap is **Butt** (for an SVG: every stroked sub-shape). The shader
+    cuts square, while CPU trim re-caps the cut ends with the stroke's cap.
+  - The material's shader reads `_VMGTrim` — the package's
+    `VMG/World/VectorSDF` and `VMG/UI/VectorSDF` do; custom materials keep
+    CPU trim.
+- Mesh vertex contract: **UV1.y** now carries the trim arc position
+  (`[0,1]` open stroke, `[2,3]` closed stroke, `-1` = not trimmable, e.g.
+  fills). UV1.x (AA distance), UV0 and vertex colors are unchanged. Shaders
+  that ignore UV1.y are unaffected. Shared logic in `Runtime/Shaders/VMGTrim.cginc`.
+- `VMGShapeAsset.AllStrokeCapsButt()`.
+
+### Changed
+
+- `VectorImageGraphic` with **FitToRect** no longer rebuilds its mesh every
+  frame; it rebuilds when the RectTransform rect or another input changes.
+- With GPU trim, `VectorImageGraphic` renders through its own copy of its
+  material (the trim window is per graphic), so it no longer batches with
+  other graphics sharing that material. `VectorSpriteRenderer` passes the
+  window through its MaterialPropertyBlock, preserving properties other
+  scripts set on the block.
+
+### Measured (editor, Debug code optimization, per frame while Trim animates)
+
+- Witch's Lounge magic circle `Circle_OT0007` (27-node bezier FreePath):
+  5.2 ms -> 0.31 ms. Simple circles: 0.8 ms -> 0.3 ms.
+- UGUI circle: 0.32 ms -> 0.004 ms.
+- Output matches CPU trim within 0.5% coverage (open, closed, wrapped and
+  offset windows; procedural and SVG). Known difference: when a trim edge sits
+  exactly on a corner, that corner's join wedge renders at half alpha for that
+  frame.
+
 ## [0.48.1] - 2026-11-18
 
 ### Changed

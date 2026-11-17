@@ -24,9 +24,31 @@ namespace VMG.Core
         private static IStrokePieceSink s_sink;
         private static readonly List<Vector2> s_piece = new List<Vector2>(RoundCapSegments + 2);
 
+        // GPU-trim arc position written into UV1.y of every emitted vertex
+        // (MeshBuffer.NoArc when the stroke is not built for GPU trim).
+        private static float s_arc = MeshBuffer.NoArc;
+        private static bool s_emitArc;
+        private static float[] s_t = new float[0];
+
         public static void Build(VectorPath path, in StrokeStyle style, MeshBuffer mb)
         {
             BuildCore(path, style, mb, 0f);
+        }
+
+        /// Build the stroke and tag every vertex with its normalized
+        /// arc-length position (UV1.y) so the VMG SDF shaders can trim it on
+        /// the GPU (VMGTrim.cginc). Closed paths are tagged in [2,3] so the
+        /// shader wraps their trim window.
+        public static void BuildWithArcLength(VectorPath path, in StrokeStyle style, MeshBuffer mb)
+        {
+            s_emitArc = true;
+            try { BuildCore(path, style, mb, 0f); }
+            finally { s_emitArc = false; s_arc = MeshBuffer.NoArc; }
+        }
+
+        private static void V(MeshBuffer mb, Vector2 p, Color32 c, float distance)
+        {
+            mb.AddVertex(p, c, distance, s_arc);
         }
 
         /// Emit the stroke as closed polygon pieces (segment ribbons, joins,
@@ -77,6 +99,25 @@ namespace VMG.Core
                 s_nrm[i] = new Vector2(-d.y, d.x);
             }
 
+            // Normalized arc length per node (closed: +2 marks the loop;
+            // the closing segment ends at 1, not back at 0, so it
+            // interpolates without a seam).
+            bool arc = s_emitArc && s_sink == null;
+            float arcBase = closed ? 2f : 0f;
+            if (arc)
+            {
+                if (s_t.Length < n + 1) s_t = new float[Mathf.NextPowerOfTwo(n + 1)];
+                float total = 0f;
+                s_t[0] = 0f;
+                for (int i = 0; i < segCount; i++)
+                {
+                    total += Vector2.Distance(path.nodes[i].position, path.nodes[(i + 1) % n].position);
+                    s_t[i + 1] = total;
+                }
+                float inv = total > 1e-7f ? 1f / total : 0f;
+                for (int i = 0; i <= segCount; i++) s_t[i] *= inv;
+            }
+
             // Build per-edge "ribbon" with a centerline rail so the SDF
             // shader has a distance=1 anchor between two distance=0 edge
             // rails. Each segment becomes 6 vertices (2 rails × 3 points
@@ -95,12 +136,14 @@ namespace VMG.Core
                 }
                 int v0 = mb.VertexCount;
                 // Layout: 0=posA, 1=ctrA, 2=negA, 3=posB, 4=ctrB, 5=negB.
-                mb.AddVertex(a + n0 * offsetPos,    col, 0f);
-                mb.AddVertex(a + n0 * centerOffset, col, 1f);
-                mb.AddVertex(a + n0 * offsetNeg,    col, 0f);
-                mb.AddVertex(b + n0 * offsetPos,    col, 0f);
-                mb.AddVertex(b + n0 * centerOffset, col, 1f);
-                mb.AddVertex(b + n0 * offsetNeg,    col, 0f);
+                if (arc) s_arc = arcBase + s_t[seg];
+                V(mb, a + n0 * offsetPos,    col, 0f);
+                V(mb, a + n0 * centerOffset, col, 1f);
+                V(mb, a + n0 * offsetNeg,    col, 0f);
+                if (arc) s_arc = arcBase + s_t[seg + 1];
+                V(mb, b + n0 * offsetPos,    col, 0f);
+                V(mb, b + n0 * centerOffset, col, 1f);
+                V(mb, b + n0 * offsetNeg,    col, 0f);
                 // Two quads — upper (pos↔center) and lower (center↔neg).
                 // Source CCW from +Z: posA→posB→ctrB→ctrA, ctrA→ctrB→negB→negA.
                 mb.AddTriangle(v0,     v0 + 3, v0 + 4);
@@ -116,6 +159,9 @@ namespace VMG.Core
                 int segA = j;
                 int segB = (j + 1) % segCount;
                 Vector2 cornerP = path.nodes[(j + 1) % n].position;
+                // Whole join takes the corner's position (the loop's seam
+                // corner takes 0, never a 1->0 ramp across the wedge).
+                if (arc) s_arc = arcBase + (j + 1 < n ? s_t[j + 1] : 0f);
                 EmitJoin(mb, cornerP, s_nrm[segA], s_nrm[segB], offsetPos, offsetNeg, col, style.join, miterLimit);
             }
 
@@ -130,6 +176,7 @@ namespace VMG.Core
                 // directions were swapped, so caps were drawn over the stroke
                 // body instead of past its ends.)
                 Vector2 startDir = new Vector2(-startN.y, startN.x); // back-pointing
+                if (arc) s_arc = 0f;
                 EmitCap(mb, startP, startN, startDir, offsetPos, offsetNeg, col, style.cap);
 
                 // End cap.
@@ -137,6 +184,7 @@ namespace VMG.Core
                 Vector2 endP = path.nodes[n - 1].position;
                 Vector2 endN = s_nrm[lastSeg];
                 Vector2 endDir = new Vector2(endN.y, -endN.x); // forward-pointing
+                if (arc) s_arc = 1f;
                 EmitCap(mb, endP, endN, endDir, offsetPos, offsetNeg, col, style.cap);
             }
         }
@@ -192,12 +240,12 @@ namespace VMG.Core
                 // so the gap is on -normal side: bridge (negA, p, negB).
                 // p sits on the polyline (center of stroke) — distance=1;
                 // negA/negB sit on the outer rail — distance=0.
-                mb.AddVertex(negA, col, 0f); mb.AddVertex(p, col, 1f); mb.AddVertex(negB, col, 0f);
+                V(mb, negA, col, 0f); V(mb, p, col, 1f); V(mb, negB, col, 0f);
                 mb.AddTriangle(c, c + 1, c + 2);
             }
             else
             {
-                mb.AddVertex(posA, col, 0f); mb.AddVertex(posB, col, 0f); mb.AddVertex(p, col, 1f);
+                V(mb, posA, col, 0f); V(mb, posB, col, 0f); V(mb, p, col, 1f);
                 mb.AddTriangle(c, c + 1, c + 2);
             }
         }
@@ -259,7 +307,7 @@ namespace VMG.Core
             int c = mb.VertexCount;
             // outerA/spike/outerB sit on the outer rail (distance=0); p is
             // the corner pivot on the polyline (distance=1).
-            mb.AddVertex(outerA, col, 0f); mb.AddVertex(spike, col, 0f); mb.AddVertex(outerB, col, 0f); mb.AddVertex(p, col, 1f);
+            V(mb, outerA, col, 0f); V(mb, spike, col, 0f); V(mb, outerB, col, 0f); V(mb, p, col, 1f);
             if (cross > 0f)
             {
                 mb.AddTriangle(c, c + 1, c + 3);
@@ -302,12 +350,12 @@ namespace VMG.Core
             int pivot = mb.VertexCount;
             // Pivot at the polyline corner — distance=1; arc samples sit on
             // the outer rail — distance=0.
-            mb.AddVertex(p, col, 1f);
+            V(mb, p, col, 1f);
             for (int s = 0; s <= seg; s++)
             {
                 float t = aStart + delta * (s / (float)seg);
                 Vector2 v = p + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r;
-                mb.AddVertex(v, col, 0f);
+                V(mb, v, col, 0f);
                 if (s > 0)
                 {
                     int last = pivot + s;
@@ -337,9 +385,9 @@ namespace VMG.Core
                 // (distance=1, matching the ribbon's center rail) to the four
                 // corners on the visible boundary (distance=0). With every
                 // vertex at 0 the SDF shader would fade the whole cap out.
-                mb.AddVertex((vPos + vNeg) * 0.5f, col, 1f);
-                mb.AddVertex(vPos, col, 0f); mb.AddVertex(extPos, col, 0f);
-                mb.AddVertex(extNeg, col, 0f); mb.AddVertex(vNeg, col, 0f);
+                V(mb, (vPos + vNeg) * 0.5f, col, 1f);
+                V(mb, vPos, col, 0f); V(mb, extPos, col, 0f);
+                V(mb, extNeg, col, 0f); V(mb, vNeg, col, 0f);
                 mb.AddTriangle(c, c + 1, c + 2);
                 mb.AddTriangle(c, c + 2, c + 3);
                 mb.AddTriangle(c, c + 3, c + 4);
@@ -374,11 +422,11 @@ namespace VMG.Core
             int pivot = mb.VertexCount;
             // Center of the cap disc sits on the polyline — distance=1; arc
             // samples sit on the outer rail — distance=0.
-            mb.AddVertex(center, col, 1f);
+            V(mb, center, col, 1f);
             for (int s = 0; s <= seg; s++)
             {
                 float t = aStart + delta * (s / (float)seg);
-                mb.AddVertex(center + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r, col, 0f);
+                V(mb, center + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r, col, 0f);
                 if (s > 0)
                 {
                     int last = pivot + s + 1;

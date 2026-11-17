@@ -53,6 +53,12 @@ namespace VMG.World
         private MeshRenderer m_Renderer;
         private MaterialPropertyBlock m_PropertyBlock;
         private static readonly int s_MainTexID = Shader.PropertyToID("_MainTex");
+        private static readonly int s_TrimID = Shader.PropertyToID("_VMGTrim");
+        // True when the current mesh was built untrimmed with per-vertex arc
+        // positions, so the shader applies Trim (see WantsGpuTrim).
+        private bool m_GpuTrimBuilt;
+        private bool m_PrevGpuTrim;
+        private bool m_TrimBlockTouched;
 
         // Dirty-flag snapshot. Update compares the current mesh inputs
         // against this and only calls Rebuild when something changed —
@@ -128,10 +134,10 @@ namespace VMG.World
             // Fill/Stroke are bypassed, but modifiers and the SVG color
             // overrides DO reach the mesh — compare those, then stop.
             // (Wiggle already forced a rebuild above when enabled.)
+            if (TrimDirty()) return true;
             if (SvgAsset != null)
             {
                 if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
-                if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
                 if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
                 if (!SvgStyleOverride.Same(m_PrevSvgFill, SvgFillOverride)) return true;
                 if (!SvgStyleOverride.Same(m_PrevSvgStroke, SvgStrokeOverride)) return true;
@@ -142,9 +148,47 @@ namespace VMG.World
             if (!VectorRendererEquality.Same(m_PrevFill, Fill)) return true;
             if (!VectorRendererEquality.Same(m_PrevDepth, Depth)) return true;
             if (!VectorRendererEquality.Same(m_PrevRound, RoundCorners)) return true;
-            if (!VectorRendererEquality.Same(m_PrevTrim, Trim)) return true;
             if (!VectorRendererEquality.Same(m_PrevWiggle, Wiggle)) return true;
             return false;
+        }
+
+        // GPU trim: the stroke mesh is built once, untrimmed, with each
+        // vertex's arc position in UV1.y, and the VMG SDF shader cuts it from
+        // _VMGTrim — so animating start / end / offset costs no rebuild.
+        // Falls back to the CPU TrimPathModifier when strokes are merged
+        // (a union has no per-vertex arc position) or when the material's
+        // shader doesn't read _VMGTrim (custom materials).
+        private bool WantsGpuTrim()
+        {
+            if (!Trim.Enabled || MergeStrokeOverlaps) return false;
+            // The shader cuts the stroke square; the CPU trim re-caps the
+            // cut ends with the stroke's own cap. Only Butt looks the same.
+            if (SvgAsset != null ? !SvgAsset.AllStrokeCapsButt() : Stroke.cap != LineCap.Butt) return false;
+            var mat = m_Renderer != null ? m_Renderer.sharedMaterial : null;
+            return mat != null && mat.HasProperty(s_TrimID);
+        }
+
+        private bool TrimDirty()
+        {
+            bool gpu = WantsGpuTrim();
+            if (gpu != m_PrevGpuTrim) return true;
+            if (gpu) return false; // window lives in the shader
+            return !VectorRendererEquality.Same(m_PrevTrim, Trim);
+        }
+
+        // Pushes the trim window to the shader. Reads the renderer's block
+        // first so properties other scripts set on it survive.
+        private void ApplyTrim()
+        {
+            if (m_Renderer == null) return;
+            if (!m_GpuTrimBuilt && !m_TrimBlockTouched) return;
+            Vector4 v = m_GpuTrimBuilt ? new Vector4(Trim.start, Trim.end, Trim.offset, 1f) : new Vector4(0f, 1f, 0f, 0f);
+            if (m_PropertyBlock == null) m_PropertyBlock = new MaterialPropertyBlock();
+            m_Renderer.GetPropertyBlock(m_PropertyBlock);
+            if (m_TrimBlockTouched && m_PropertyBlock.GetVector(s_TrimID) == v) return;
+            m_PropertyBlock.SetVector(s_TrimID, v);
+            m_Renderer.SetPropertyBlock(m_PropertyBlock);
+            m_TrimBlockTouched = true;
         }
 
         void CaptureSnapshot()
@@ -162,7 +206,9 @@ namespace VMG.World
             m_PrevSvgFill = SvgFillOverride;
             m_PrevSvgStroke = SvgStrokeOverride;
             m_PrevMergeStrokes = MergeStrokeOverlaps;
+            m_PrevGpuTrim = m_GpuTrimBuilt;
             m_HasSnapshot = true;
+            ApplyTrim();
         }
 
         /// Manually force a mesh rebuild on the next Update. Use this
@@ -191,6 +237,7 @@ namespace VMG.World
             if (m_Filter.sharedMesh != m_Mesh) m_Filter.sharedMesh = m_Mesh;
             ApplyMaterial();
             ApplyTexture();
+            ApplyTrim();
             ApplySorting();
         }
 
@@ -289,7 +336,9 @@ namespace VMG.World
             ShapeStack.Build(m_Pipeline.workingPath);
             if (RoundCorners.Enabled) RoundCorners.Apply(m_Pipeline.workingPath);
             if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
-            if (Trim.Enabled) Trim.Apply(m_Pipeline.workingPath);
+            bool gpuTrim = WantsGpuTrim();
+            m_GpuTrimBuilt = gpuTrim;
+            if (Trim.Enabled && !gpuTrim) Trim.Apply(m_Pipeline.workingPath);
             if (Stroke.enabled)
             {
                 var stroke = Stroke; stroke.color *= Tint;
@@ -305,6 +354,7 @@ namespace VMG.World
                     m_StrokeMerger.Add(m_Pipeline.workingPath, stroke);
                     m_StrokeMerger.Flush(m_StrokeBuf);
                 }
+                else if (gpuTrim) StrokeMeshBuilder.BuildWithArcLength(m_Pipeline.workingPath, stroke, m_StrokeBuf);
                 else StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
@@ -374,6 +424,9 @@ namespace VMG.World
             var asset = SvgAsset;
             float scale = SvgUnitsPerWorldUnit > 1e-5f ? 1f / SvgUnitsPerWorldUnit : 1f;
             Vector2 origin = -asset.viewBoxSize * scale * 0.5f;
+            bool gpuTrim = WantsGpuTrim();
+            m_GpuTrimBuilt = gpuTrim;
+            bool cpuTrim = Trim.Enabled && !gpuTrim;
             // Bezier sample count comes from slot 0 (SVG ignores the shape
             // stack, but it still needs a tessellation density).
             int bezSamples = Mathf.Max(4, ShapeStack.Slot0.shape.bezierSamplesPerSegment > 0
@@ -442,17 +495,18 @@ namespace VMG.World
                 {
                     // Trim applies to the stroke only, as in the
                     // procedural path: the fill keeps its closed contour.
-                    if (Trim.Enabled)
+                    if (cpuTrim)
                     {
                         m_SvgTrimPath.CopyFrom(m_SvgPath);
                         Trim.Apply(m_SvgTrimPath);
                     }
-                    var strokePath = Trim.Enabled ? m_SvgTrimPath : m_SvgPath;
+                    var strokePath = cpuTrim ? m_SvgTrimPath : m_SvgPath;
 
                     var stroke = SvgStrokeOverride.ApplyTo(sub.stroke);
                     stroke.color *= Tint;
                     if (!SvgStrokeOverride.overrideWidth) stroke.width *= scale;
                     if (MergeStrokeOverlaps) m_StrokeMerger.Add(strokePath, stroke);
+                    else if (gpuTrim) StrokeMeshBuilder.BuildWithArcLength(strokePath, stroke, m_Combined);
                     else StrokeMeshBuilder.Build(strokePath, stroke, m_Combined);
                 }
             }
@@ -562,7 +616,7 @@ namespace VMG.World
                 dst.vertices.Add(src.vertices[i]);
                 dst.colors.Add(src.colors[i]);
                 dst.uvs.Add(src.uvs[i]);
-                dst.uv1s.Add(i < src.uv1s.Count ? src.uv1s[i] : new Vector2(1f, 0f));
+                dst.uv1s.Add(i < src.uv1s.Count ? src.uv1s[i] : new Vector2(1f, MeshBuffer.NoArc));
             }
             // Carry normals only if both sides actually have a normal for
             // every vertex; otherwise drop them so ApplyTo skips SetNormals.

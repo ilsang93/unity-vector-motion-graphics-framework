@@ -49,6 +49,19 @@ namespace VMG.Svg
         /// returned VectorPath must NOT be mutated by callers; CopyFrom it
         /// onto a renderer-owned path before applying transforms. Returns
         /// null for invalid indices or sub-shapes with too few nodes.
+        /// True when no enabled sub-shape stroke uses a Round or Square cap.
+        /// Renderers only trim SVG strokes on the GPU in that case: the
+        /// shader cuts square, while the CPU trim re-caps the cut ends.
+        public bool AllStrokeCapsButt()
+        {
+            for (int i = 0; i < subShapes.Count; i++)
+            {
+                var sub = subShapes[i];
+                if (sub != null && sub.stroke.enabled && sub.stroke.cap != LineCap.Butt) return false;
+            }
+            return true;
+        }
+
         public VectorPath GetTessellation(int subShapeIndex, int bezSamples)
         {
             if (subShapeIndex < 0 || subShapeIndex >= subShapes.Count) return null;

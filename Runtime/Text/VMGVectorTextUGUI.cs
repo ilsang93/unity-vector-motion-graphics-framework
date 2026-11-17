@@ -307,7 +307,7 @@ namespace VMG.Text
                     position = mb.vertices[i],
                     color = mb.colors[i],
                     uv0 = mb.uvs[i],
-                    uv1 = hasUv1 ? mb.uv1s[i] : new Vector2(1f, 0f),
+                    uv1 = hasUv1 ? mb.uv1s[i] : new Vector2(1f, MeshBuffer.NoArc),
                     normal = new Vector3(0f, 0f, -1f),
                     tangent = new Vector4(1f, 0f, 0f, -1f),
                 };

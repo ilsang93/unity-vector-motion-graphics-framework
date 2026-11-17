@@ -85,7 +85,9 @@ uGUI에 포함되어 있으므로 벡터 텍스트를 위한 별도 의존성이
 ### 모디파이어  *(고정 순서: Round Corner → Trim → Wiggle)*
 
 - **Round Corner** — 인접 코너 클램핑 포함 실제 경로 레벨 라운딩
-- **Trim Path** — start / end / offset, 닫힌 경로 wrap, 열린 경로 깜빡임 없는 안전 클램프
+- **Trim Path** — start / end / offset, 닫힌 경로 wrap, 열린 경로 깜빡임 없는 안전 클램프.
+  패키지 SDF 머티리얼을 쓰는 Butt 캡 스트로크는 **GPU에서 트림**되어, 트림 애니메이션 중
+  메시를 다시 만들지 않습니다(Round/Square 캡, 병합 스트로크, 커스텀 머티리얼은 CPU 트림)
 - **Wiggle** — After Effects 스타일로 *선을 따라* 출렁이는 리플(arc-length 리샘플,
   스파이크 없음), intensity / frequency / spacing / seed 조절
 

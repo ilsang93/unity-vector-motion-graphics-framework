@@ -11,7 +11,8 @@ namespace VMG.Core
         // UV1.x carries the AA distance channel: 1 = fully interior, 0 = at
         // the visible boundary. The SDF shader fades alpha across the
         // fwidth(distance) band so edges land on the pixel grid regardless
-        // of zoom. UV1.y is reserved.
+        // of zoom. UV1.y is the GPU-trim arc position (see VMGTrim.cginc):
+        // [0,1] open stroke, [2,3] closed stroke, -1 = not trimmable.
         public readonly List<Vector2> uv1s = new List<Vector2>(256);
         public readonly List<Vector3> normals = new List<Vector3>(256);
         public readonly List<int> triangles = new List<int>(512);
@@ -54,8 +55,11 @@ namespace VMG.Core
             vertices.Add(new Vector3(p.x, p.y, 0f));
             colors.Add(c);
             uvs.Add(p);
-            uv1s.Add(new Vector2(1f, 0f));
+            uv1s.Add(new Vector2(1f, NoArc));
         }
+
+        /// UV1.y value for geometry GPU trim must never cut (fills, rings).
+        public const float NoArc = -1f;
 
         /// Add an interior or AA-ring vertex with explicit distance value.
         /// distance: 1 = fully interior (opaque), 0 = at visible boundary.
@@ -64,7 +68,16 @@ namespace VMG.Core
             vertices.Add(new Vector3(p.x, p.y, 0f));
             colors.Add(c);
             uvs.Add(p);
-            uv1s.Add(new Vector2(distance, 0f));
+            uv1s.Add(new Vector2(distance, NoArc));
+        }
+
+        /// Stroke vertex with its GPU-trim arc position (UV1.y).
+        public void AddVertex(Vector2 p, Color32 c, float distance, float arc)
+        {
+            vertices.Add(new Vector3(p.x, p.y, 0f));
+            colors.Add(c);
+            uvs.Add(p);
+            uv1s.Add(new Vector2(distance, arc));
         }
 
         /// Add a vertex with an explicit Z and normal. Use when emitting
@@ -75,7 +88,7 @@ namespace VMG.Core
             vertices.Add(p);
             colors.Add(c);
             uvs.Add(uv);
-            uv1s.Add(new Vector2(1f, 0f));
+            uv1s.Add(new Vector2(1f, NoArc));
             normals.Add(normal);
         }
 

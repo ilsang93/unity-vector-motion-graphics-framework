@@ -10,6 +10,7 @@ Shader "VMG/World/VectorSDF"
     {
         [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
+        [HideInInspector] _VMGTrim ("VMG Trim (start, end, offset, on)", Vector) = (0,1,0,0)
     }
 
     SubShader
@@ -36,13 +37,14 @@ Shader "VMG/World/VectorSDF"
             #pragma target 2.0
 
             #include "UnityCG.cginc"
+            #include "VMGTrim.cginc"
 
             struct appdata_t
             {
                 float4 vertex   : POSITION;
                 float4 color    : COLOR;
                 float2 texcoord : TEXCOORD0;
-                float2 dist     : TEXCOORD1; // x = AA distance, y = reserved
+                float2 dist     : TEXCOORD1; // x = AA distance, y = trim arc position
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -51,7 +53,7 @@ Shader "VMG/World/VectorSDF"
                 float4 vertex   : SV_POSITION;
                 fixed4 color    : COLOR;
                 float2 texcoord : TEXCOORD0;
-                float  dist     : TEXCOORD1;
+                float2 dist     : TEXCOORD1;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -67,7 +69,7 @@ Shader "VMG/World/VectorSDF"
                 OUT.vertex = UnityObjectToClipPos(v.vertex);
                 OUT.texcoord = TRANSFORM_TEX(v.texcoord, _MainTex);
                 OUT.color = v.color * _Color;
-                OUT.dist = v.dist.x;
+                OUT.dist = v.dist;
                 return OUT;
             }
 
@@ -76,9 +78,9 @@ Shader "VMG/World/VectorSDF"
                 half4 color = tex2D(_MainTex, IN.texcoord) * IN.color;
 
                 // SDF anti-aliasing: see VMG_UI_SDF for derivation.
-                half w = fwidth(IN.dist);
-                half aa = smoothstep(0.0, max(w, 1e-5), IN.dist);
-                color.a *= aa;
+                half w = fwidth(IN.dist.x);
+                half aa = smoothstep(0.0, max(w, 1e-5), IN.dist.x);
+                color.a *= aa * VMGTrimAlpha(IN.dist.y);
                 return color;
             }
             ENDCG

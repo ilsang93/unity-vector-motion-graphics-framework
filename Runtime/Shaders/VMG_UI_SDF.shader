@@ -9,6 +9,7 @@ Shader "VMG/UI/VectorSDF"
     {
         [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
         _Color ("Tint", Color) = (1,1,1,1)
+        [HideInInspector] _VMGTrim ("VMG Trim (start, end, offset, on)", Vector) = (0,1,0,0)
 
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -58,6 +59,7 @@ Shader "VMG/UI/VectorSDF"
 
             #include "UnityCG.cginc"
             #include "UnityUI.cginc"
+            #include "VMGTrim.cginc"
 
             #pragma multi_compile_local _ UNITY_UI_CLIP_RECT
             #pragma multi_compile_local _ UNITY_UI_ALPHACLIP
@@ -67,7 +69,7 @@ Shader "VMG/UI/VectorSDF"
                 float4 vertex   : POSITION;
                 float4 color    : COLOR;
                 float2 texcoord : TEXCOORD0;
-                float2 dist     : TEXCOORD1; // x = AA distance, y = reserved
+                float2 dist     : TEXCOORD1; // x = AA distance, y = trim arc position
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -77,7 +79,7 @@ Shader "VMG/UI/VectorSDF"
                 fixed4 color    : COLOR;
                 float2 texcoord : TEXCOORD0;
                 float4 worldPosition : TEXCOORD1;
-                float  dist     : TEXCOORD2;
+                float2 dist     : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -96,7 +98,7 @@ Shader "VMG/UI/VectorSDF"
                 OUT.vertex = UnityObjectToClipPos(OUT.worldPosition);
                 OUT.texcoord = TRANSFORM_TEX(v.texcoord, _MainTex);
                 OUT.color = v.color * _Color;
-                OUT.dist = v.dist.x;
+                OUT.dist = v.dist;
                 return OUT;
             }
 
@@ -112,9 +114,9 @@ Shader "VMG/UI/VectorSDF"
                 // verts have distance=1 with fwidth=0, producing
                 // smoothstep(0, 0, 1) = 1 (fully opaque) without
                 // a divide-by-zero (smoothstep clamps the input).
-                half w = fwidth(IN.dist);
-                half aa = smoothstep(0.0, max(w, 1e-5), IN.dist);
-                color.a *= aa;
+                half w = fwidth(IN.dist.x);
+                half aa = smoothstep(0.0, max(w, 1e-5), IN.dist.x);
+                color.a *= aa * VMGTrimAlpha(IN.dist.y);
 
                 #ifdef UNITY_UI_CLIP_RECT
                 color.a *= UnityGet2DClipping(IN.worldPosition.xy, _ClipRect);

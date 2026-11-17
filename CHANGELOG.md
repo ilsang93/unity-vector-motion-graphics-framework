@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.50.0] - 2026-11-18
+
+### Added
+
+- **`VectorSpriteRenderer.GpuTrimCustomMaterial`** (off by default, Rendering
+  section). Lets GPU trim run on a custom material — assigned through the
+  `Material` field or put straight on the MeshRenderer by a script — whose
+  shader declares `_VMGTrim` (built-in shaders: `#include` VMGTrim.cginc;
+  Shader Graph: the `VMGTrimCore.hlsl` Custom Function, see 0.49.0). The trim
+  window is written **into that material** (never a MaterialPropertyBlock), so
+  it must be the renderer's own copy:
+  - Each material accepts one writer. A second opted-in renderer on the same
+    material logs one warning and uses CPU trim; it takes over when the
+    first renderer releases the material (disabled, destroyed, or switched).
+  - Switching away resets the material's window to "no trim".
+  - Butt caps and `MergeStrokeOverlaps` off are still required, as for the
+    default material.
+- `VectorImageGraphic` needs no switch: it already renders through a
+  per-graphic copy of its material, so a custom UGUI material that declares
+  `_VMGTrim` gets GPU trim as is.
+
 ## [0.49.1] - 2026-11-18
 
 ### Fixed

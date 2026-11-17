@@ -88,8 +88,9 @@ symmetric). Animate `SlotN.intensity` to morph between shapes.
 - **Round Corner** — real path-level rounding with adjacent-corner clamping
 - **Trim Path** — start / end / offset, closed-path wrap, flicker-free open-path clamp.
   Butt-capped strokes on the package's SDF materials trim **on the GPU**: animating
-  the window costs no mesh rebuild (Round/Square caps, merged strokes and custom
-  materials fall back to CPU trim)
+  the window costs no mesh rebuild (Round/Square caps and merged strokes fall back to
+  CPU trim; a custom world material joins in via `GpuTrimCustomMaterial` if its shader
+  declares `_VMGTrim`, e.g. through the `VMGTrimCore.hlsl` Shader Graph Custom Function)
 - **Wiggle** — After Effects-style ripple *along the line* (arc-length resampled,
   spike-free), with intensity / frequency / spacing / seed
 

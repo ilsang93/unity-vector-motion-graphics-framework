@@ -26,6 +26,7 @@ namespace VMG.EditorTools
         private SerializedProperty m_Material;
         private SerializedProperty m_Texture;
         private SerializedProperty m_MergeStrokeOverlaps;
+        private SerializedProperty m_GpuTrimCustomMaterial;
         private SerializedProperty m_SortingLayerID;
         private SerializedProperty m_SortingOrder;
         private SerializedProperty m_SvgFillOverride;
@@ -46,6 +47,7 @@ namespace VMG.EditorTools
             m_Material = serializedObject.FindProperty("Material");
             m_Texture = serializedObject.FindProperty("Texture");
             m_MergeStrokeOverlaps = serializedObject.FindProperty("MergeStrokeOverlaps");
+            m_GpuTrimCustomMaterial = serializedObject.FindProperty("GpuTrimCustomMaterial");
             m_SortingLayerID = serializedObject.FindProperty("SortingLayerID");
             m_SortingOrder = serializedObject.FindProperty("SortingOrder");
             m_SvgFillOverride = serializedObject.FindProperty("SvgFillOverride");
@@ -121,6 +123,7 @@ namespace VMG.EditorTools
             EditorGUILayout.PropertyField(m_Material);
             EditorGUILayout.PropertyField(m_Texture);
             EditorGUILayout.PropertyField(m_MergeStrokeOverlaps);
+            EditorGUILayout.PropertyField(m_GpuTrimCustomMaterial);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Sorting", EditorStyles.boldLabel);

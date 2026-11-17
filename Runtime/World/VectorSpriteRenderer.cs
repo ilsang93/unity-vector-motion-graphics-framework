@@ -38,6 +38,8 @@ namespace VMG.World
         public Texture Texture;
         [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). With an SvgAsset, merged strokes draw after all fills (as in UGUI). Costs a polygon union per rebuild — avoid on dense paths whose Trim / Wiggle changes every frame. Off = legacy per-segment mesh (cheaper, overlaps blend twice under alpha).")]
         public bool MergeStrokeOverlaps;
+        [Tooltip("Let GPU trim run on a custom material assigned to this renderer (via the Material field or directly on the MeshRenderer) whose shader declares _VMGTrim (see Runtime/Shaders/VMGTrimCore.hlsl). The trim window is written INTO that material, so it must be this renderer's own copy: a material another opted-in renderer already writes to falls back to CPU trim. Off = custom materials always use CPU trim.")]
+        public bool GpuTrimCustomMaterial;
         [Tooltip("Sorting layer ID for the underlying MeshRenderer. Keyframable (integer).")]
         public int SortingLayerID;
         [Tooltip("Order in sorting layer. Keyframable.")]
@@ -63,6 +65,12 @@ namespace VMG.World
         // MaterialPropertyBlock: any block on a MeshRenderer zeroes URP
         // Sprite Shader Graphs' per-draw sprite data and collapses the mesh.
         private Material m_OwnedMaterial;
+        // Material currently carrying this renderer's trim window (the owned
+        // default, or an opted-in custom material), and who writes which
+        // material, so two renderers never fight over one window.
+        private Material m_TrimTarget;
+        private static readonly Dictionary<Material, VectorSpriteRenderer> s_TrimWriters = new Dictionary<Material, VectorSpriteRenderer>();
+        private bool m_WarnedSharedTrimMaterial;
         private const string OwnedMaterialName = "VMG_VectorSprite_Default";
 
         // Dirty-flag snapshot. Update compares the current mesh inputs
@@ -95,6 +103,7 @@ namespace VMG.World
 
         private void OnDestroy()
         {
+            SetTrimTarget(null);
             if (m_OwnedMaterial == null) return;
             if (Application.isPlaying) Destroy(m_OwnedMaterial);
             else DestroyImmediate(m_OwnedMaterial);
@@ -103,6 +112,7 @@ namespace VMG.World
 
         private void OnDisable()
         {
+            SetTrimTarget(null);
             if (m_Mesh != null)
             {
                 if (Application.isPlaying) Destroy(m_Mesh);
@@ -187,8 +197,39 @@ namespace VMG.World
             // The shader cuts the stroke square; the CPU trim re-caps the
             // cut ends with the stroke's own cap. Only Butt looks the same.
             if (SvgAsset != null ? !SvgAsset.AllStrokeCapsButt() : Stroke.cap != LineCap.Butt) return false;
-            if (m_Renderer == null || m_OwnedMaterial == null) return false;
-            return m_Renderer.sharedMaterial == m_OwnedMaterial && m_OwnedMaterial.HasProperty(s_TrimID);
+            return ResolveTrimTarget() != null;
+        }
+
+        // The material GPU trim would write into, or null for CPU trim.
+        private Material ResolveTrimTarget()
+        {
+            var mat = m_Renderer != null ? m_Renderer.sharedMaterial : null;
+            if (mat == null || !mat.HasProperty(s_TrimID)) return null;
+            if (mat == m_OwnedMaterial) return mat;
+            if (!GpuTrimCustomMaterial) return null;
+            if (s_TrimWriters.TryGetValue(mat, out var writer) && writer != null && writer != this)
+            {
+                if (!m_WarnedSharedTrimMaterial)
+                {
+                    m_WarnedSharedTrimMaterial = true;
+                    Debug.LogWarning($"[VMG] '{name}': GpuTrimCustomMaterial is on but material '{mat.name}' is already trimmed by '{writer.name}'. Give each renderer its own material copy; using CPU trim.", this);
+                }
+                return null;
+            }
+            return mat;
+        }
+
+        private void SetTrimTarget(Material target)
+        {
+            if (target == m_TrimTarget) return;
+            if (m_TrimTarget != null)
+            {
+                if (s_TrimWriters.TryGetValue(m_TrimTarget, out var w) && w == this) s_TrimWriters.Remove(m_TrimTarget);
+                // Leave the old material untrimmed for whoever uses it next.
+                if (m_TrimTarget.HasProperty(s_TrimID)) m_TrimTarget.SetVector(s_TrimID, new Vector4(0f, 1f, 0f, 0f));
+            }
+            m_TrimTarget = target;
+            if (target != null) s_TrimWriters[target] = this;
         }
 
         private bool TrimDirty()
@@ -202,9 +243,9 @@ namespace VMG.World
         // Pushes the trim window into the owned default material.
         private void ApplyTrim()
         {
-            if (m_OwnedMaterial == null || !m_OwnedMaterial.HasProperty(s_TrimID)) return;
-            Vector4 v = m_GpuTrimBuilt ? new Vector4(Trim.start, Trim.end, Trim.offset, 1f) : new Vector4(0f, 1f, 0f, 0f);
-            if (m_OwnedMaterial.GetVector(s_TrimID) != v) m_OwnedMaterial.SetVector(s_TrimID, v);
+            if (m_TrimTarget == null || !m_GpuTrimBuilt) return;
+            var v = new Vector4(Trim.start, Trim.end, Trim.offset, 1f);
+            if (m_TrimTarget.GetVector(s_TrimID) != v) m_TrimTarget.SetVector(s_TrimID, v);
         }
 
         void CaptureSnapshot()
@@ -367,6 +408,7 @@ namespace VMG.World
             if (Wiggle.Enabled) Wiggle.Apply(m_Pipeline.workingPath, wiggleTime);
             bool gpuTrim = WantsGpuTrim();
             m_GpuTrimBuilt = gpuTrim;
+            SetTrimTarget(gpuTrim ? ResolveTrimTarget() : null);
             if (Trim.Enabled && !gpuTrim) Trim.Apply(m_Pipeline.workingPath);
             if (Stroke.enabled)
             {
@@ -455,6 +497,7 @@ namespace VMG.World
             Vector2 origin = -asset.viewBoxSize * scale * 0.5f;
             bool gpuTrim = WantsGpuTrim();
             m_GpuTrimBuilt = gpuTrim;
+            SetTrimTarget(gpuTrim ? ResolveTrimTarget() : null);
             bool cpuTrim = Trim.Enabled && !gpuTrim;
             // Bezier sample count comes from slot 0 (SVG ignores the shape
             // stack, but it still needs a tessellation density).

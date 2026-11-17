@@ -24,6 +24,16 @@ window — Trim start / end / offset changes cost no rebuild.
   fills). UV1.x (AA distance), UV0 and vertex colors are unchanged. Shaders
   that ignore UV1.y are unaffected. Shared logic in `Runtime/Shaders/VMGTrim.cginc`.
 - `VMGShapeAsset.AllStrokeCapsButt()`.
+- **Shader Graph support:** `Runtime/Shaders/VMGTrimCore.hlsl` exposes
+  `VMGTrim` for a Custom Function node (File mode). Inputs: `Arc` = UV node
+  channel UV1 → Split G, `Trim` = an exposed Vector4 property with Reference
+  `_VMGTrim` (default 0,1,0,0). Output `Alpha` multiplies into the fragment
+  alpha. A custom material that declares `_VMGTrim` this way gets GPU trim.
+- The GPU/CPU decision follows the material actually on the renderer
+  (`MeshRenderer.sharedMaterial` / `Graphic.material`), not just the VMG
+  `Material` field, so a script that swaps the renderer's material directly
+  is honored. `VectorSpriteRenderer` re-checks in `LateUpdate`, so a swap made
+  after its `Update` still takes effect before that frame renders.
 
 ### Changed
 

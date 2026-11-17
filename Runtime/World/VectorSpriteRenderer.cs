@@ -120,6 +120,15 @@ namespace VMG.World
             if (IsMeshInputDirty()) Rebuild();
         }
 
+        // Scripts may swap MeshRenderer.sharedMaterial after this Update ran
+        // (e.g. a custom shader without _VMGTrim replacing the default). The
+        // GPU-trim mesh is untrimmed, so re-check before the frame renders or
+        // that frame would show the whole stroke.
+        private void LateUpdate()
+        {
+            if (m_HasSnapshot && WantsGpuTrim() != m_GpuTrimBuilt) Rebuild();
+        }
+
         bool IsMeshInputDirty()
         {
             if (!m_HasSnapshot) return true;

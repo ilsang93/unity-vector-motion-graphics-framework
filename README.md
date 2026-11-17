@@ -77,6 +77,11 @@ symmetric). Animate `SlotN.intensity` to morph between shapes.
   hole carving (even-odd)
 - **Gradients** — two-stop **Linear / Radial** on fill *and* stroke, baked
   per-vertex on the CPU (fully keyframable), mapped across the shared fill+stroke bounds
+- **Merge Stroke Overlaps** *(per renderer, off by default)* — strokes are built as
+  one merged outline per color, so a semi-transparent stroke never blends twice over
+  itself (joins, round strokes) or over another same-colored stroke (SVG group-opacity
+  look). Costs a polygon union per rebuild; fill-over-stroke and different-colored
+  overlaps still blend
 
 ### Modifiers  *(fixed order: Round Corner → Trim → Wiggle)*
 
@@ -236,3 +241,5 @@ Import via **Package Manager ▸ VMG ▸ Samples**:
 - **Repo:** <https://github.com/ilsang93/unity-vector-motion-graphics-framework>
 - **Package id:** `com.ilsang.vmg` · **Namespaces:** `VMG.Core`, `VMG.UI`,
   `VMG.World`, `VMG.Svg`, `VMG.Text`, `VMG.Tween`
+- **Third-party:** [Clipper2](https://github.com/AngusJohnson/Clipper2) (Boost Software
+  License 1.0), vendored under `Runtime/ThirdParty/Clipper2` — see `Third Party Notices.md`

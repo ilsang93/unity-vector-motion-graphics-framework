@@ -31,9 +31,12 @@ namespace VMG.UI
         public bool FitToRect = true;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Object reference: NOT keyframable from AnimationClip — swap via script.")]
         public Texture Texture;
+        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). Costs a polygon union per rebuild — measure with Wiggle on. Off = legacy mesh.")]
+        public bool MergeStrokeOverlaps;
 
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
+        private readonly StrokeMerger m_StrokeMerger = new StrokeMerger();
 
         // Dirty-flag snapshot. LateUpdate compares the current mesh
         // inputs against this and skips SetVerticesDirty when nothing
@@ -53,6 +56,7 @@ namespace VMG.UI
         private SvgStyleOverride m_PrevSvgFill;
         private SvgStyleOverride m_PrevSvgStroke;
         private Texture m_PrevTexture;
+        private bool m_PrevMergeStrokes;
         private bool m_HasSnapshot;
 
         public override Texture mainTexture => Texture != null ? Texture : base.mainTexture;
@@ -165,6 +169,7 @@ namespace VMG.UI
             if (!ReferenceEquals(m_PrevTexture, Texture)) return true;
             if (m_PrevGraphicColor != color) return true;
             if (m_PrevFitToRect != FitToRect) return true;
+            if (m_PrevMergeStrokes != MergeStrokeOverlaps) return true;
             // With an SvgAsset the procedural ShapeStack and its own
             // Fill/Stroke are bypassed, but modifiers and the SVG color
             // overrides DO reach the mesh — compare those, then stop.
@@ -201,6 +206,7 @@ namespace VMG.UI
             m_PrevSvgFill = SvgFillOverride;
             m_PrevSvgStroke = SvgStrokeOverride;
             m_PrevTexture = Texture;
+            m_PrevMergeStrokes = MergeStrokeOverlaps;
             m_HasSnapshot = true;
         }
 
@@ -275,7 +281,14 @@ namespace VMG.UI
             {
                 var stroke = Stroke;
                 stroke.color *= color;
-                StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
+                if (MergeStrokeOverlaps)
+                {
+                    m_StrokeMerger.Begin(StrokeMerger.ExtentOf(m_Pipeline.workingPath, stroke.width));
+                    m_StrokeMerger.QualityTriangulation = stroke.useGradient && stroke.gradient.type == GradientType.Radial;
+                    m_StrokeMerger.Add(m_Pipeline.workingPath, stroke);
+                    m_StrokeMerger.Flush(m_StrokeBuf);
+                }
+                else StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
             // Gradient bake: recolor fill/stroke verts across the renderer's
@@ -370,6 +383,12 @@ namespace VMG.UI
             // procedural path, not in raw viewBox units.
             float wiggleTime = WiggleTime();
             bool anyModifier = RoundCorners.Enabled || Wiggle.Enabled || Trim.Enabled;
+            if (MergeStrokeOverlaps)
+            {
+                m_StrokeMerger.Begin(Mathf.Max(fitSize.x, fitSize.y));
+                m_StrokeMerger.QualityTriangulation = SvgStrokeOverride.enabled && SvgStrokeOverride.useGradient
+                                                      && SvgStrokeOverride.gradient.type == GradientType.Radial;
+            }
 
             // Reset fill grouping (return any borrowed paths to the pool).
             for (int i = 0; i < m_FillGroup.Count; i++) m_PathPool.Add(m_FillGroup[i]);
@@ -434,10 +453,12 @@ namespace VMG.UI
                     var stroke = SvgStrokeOverride.ApplyTo(sub.stroke);
                     stroke.color *= color;
                     stroke.width *= scale;
-                    StrokeMeshBuilder.Build(strokePath, stroke, m_StrokeBuf);
+                    if (MergeStrokeOverlaps) m_StrokeMerger.Add(strokePath, stroke);
+                    else StrokeMeshBuilder.Build(strokePath, stroke, m_StrokeBuf);
                 }
             }
             if (haveGroup) FlushSvgFillGroup(groupFill);
+            if (MergeStrokeOverlaps) m_StrokeMerger.Flush(m_StrokeBuf);
 
             // Gradient bake. Mirrors the procedural branch: both gradients
             // share one coordinate frame so fill and stroke line up. An

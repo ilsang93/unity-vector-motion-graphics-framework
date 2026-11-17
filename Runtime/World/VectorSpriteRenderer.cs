@@ -36,6 +36,8 @@ namespace VMG.World
         public Material Material;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Applied via MaterialPropertyBlock so the shared material stays shared. Object reference: NOT keyframable from AnimationClip — swap via script.")]
         public Texture Texture;
+        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). With an SvgAsset, merged strokes draw after all fills (as in UGUI). Costs a polygon union per rebuild — measure with Wiggle on. Off = legacy mesh.")]
+        public bool MergeStrokeOverlaps;
         [Tooltip("Sorting layer ID for the underlying MeshRenderer. Keyframable (integer).")]
         public int SortingLayerID;
         [Tooltip("Order in sorting layer. Keyframable.")]
@@ -45,6 +47,7 @@ namespace VMG.World
         private readonly MeshBuffer m_Combined = new MeshBuffer();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
         private readonly MeshBuffer m_BackStrokeBuf = new MeshBuffer();
+        private readonly StrokeMerger m_StrokeMerger = new StrokeMerger();
         private Mesh m_Mesh;
         private MeshFilter m_Filter;
         private MeshRenderer m_Renderer;
@@ -69,6 +72,7 @@ namespace VMG.World
         private VMGShapeAsset m_PrevSvgAsset;
         private SvgStyleOverride m_PrevSvgFill;
         private SvgStyleOverride m_PrevSvgStroke;
+        private bool m_PrevMergeStrokes;
         private bool m_HasSnapshot;
 
         private void OnEnable()
@@ -119,6 +123,7 @@ namespace VMG.World
             if (!ReferenceEquals(m_PrevSvgAsset, SvgAsset)) return true;
             if (m_PrevTint != Tint) return true;
             if (m_PrevSvgUnits != SvgUnitsPerWorldUnit) return true;
+            if (m_PrevMergeStrokes != MergeStrokeOverlaps) return true;
             // With an SvgAsset the procedural ShapeStack and its own
             // Fill/Stroke are bypassed, but modifiers and the SVG color
             // overrides DO reach the mesh — compare those, then stop.
@@ -156,6 +161,7 @@ namespace VMG.World
             m_PrevSvgAsset = SvgAsset;
             m_PrevSvgFill = SvgFillOverride;
             m_PrevSvgStroke = SvgStrokeOverride;
+            m_PrevMergeStrokes = MergeStrokeOverlaps;
             m_HasSnapshot = true;
         }
 
@@ -292,7 +298,14 @@ namespace VMG.World
                 // the side walls and break occlusion when the renderer is
                 // viewed from the side.
                 if (extrude) stroke.alignment = StrokeAlignment.Inner;
-                StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
+                if (MergeStrokeOverlaps)
+                {
+                    m_StrokeMerger.Begin(StrokeMerger.ExtentOf(m_Pipeline.workingPath, stroke.width));
+                    m_StrokeMerger.QualityTriangulation = stroke.useGradient && stroke.gradient.type == GradientType.Radial;
+                    m_StrokeMerger.Add(m_Pipeline.workingPath, stroke);
+                    m_StrokeMerger.Flush(m_StrokeBuf);
+                }
+                else StrokeMeshBuilder.Build(m_Pipeline.workingPath, stroke, m_StrokeBuf);
             }
 
             // Gradient bake: recolor fill/stroke verts across the renderer's
@@ -379,6 +392,15 @@ namespace VMG.World
             bool haveGroup = false;
 
             int svgFillStart = m_Combined.VertexCount;
+            if (MergeStrokeOverlaps)
+            {
+                Vector2 extent = asset.viewBoxSize * scale;
+                m_StrokeMerger.Begin(Mathf.Max(extent.x, extent.y));
+                // One gradient bake covers fill and stroke here (see below).
+                m_StrokeMerger.QualityTriangulation =
+                    (SvgFillOverride.enabled && SvgFillOverride.useGradient && SvgFillOverride.gradient.type == GradientType.Radial) ||
+                    (SvgStrokeOverride.enabled && SvgStrokeOverride.useGradient && SvgStrokeOverride.gradient.type == GradientType.Radial);
+            }
 
             for (int s = 0; s < asset.subShapes.Count; s++)
             {
@@ -430,10 +452,12 @@ namespace VMG.World
                     var stroke = SvgStrokeOverride.ApplyTo(sub.stroke);
                     stroke.color *= Tint;
                     if (!SvgStrokeOverride.overrideWidth) stroke.width *= scale;
-                    StrokeMeshBuilder.Build(strokePath, stroke, m_Combined);
+                    if (MergeStrokeOverlaps) m_StrokeMerger.Add(strokePath, stroke);
+                    else StrokeMeshBuilder.Build(strokePath, stroke, m_Combined);
                 }
             }
             if (haveGroup) FlushSvgFillGroup(groupFill);
+            if (MergeStrokeOverlaps) m_StrokeMerger.Flush(m_Combined);
 
             // Gradient bake across the whole SVG's fitted bounds, so fill
             // and stroke share one coordinate frame (mirrors the

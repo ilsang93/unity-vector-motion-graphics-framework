@@ -77,6 +77,10 @@ uGUI에 포함되어 있으므로 벡터 텍스트를 위한 별도 의존성이
 - **필** — 자체 ear-clipping 삼각화기(오목 다각형 안전), 다중 컨투어 구멍 카빙(even-odd)
 - **그라데이션** — fill과 stroke 모두 2-stop **Linear / Radial** 지원, CPU에서
   per-vertex로 베이크(완전 키프레임 가능), fill+stroke 공유 bounds 기준 매핑
+- **Merge Stroke Overlaps** *(렌더러 단위, 기본 꺼짐)* — 스트로크를 색별로 하나의 병합된
+  윤곽으로 만들어, 반투명 스트로크가 자기 자신(조인, 원형 획)이나 같은 색의 다른 스트로크
+  위에 두 번 섞이지 않습니다(SVG 그룹 투명도와 같은 결과). 리빌드마다 다각형 union 비용이
+  들며, 필과 스트로크의 겹침이나 색이 다른 스트로크끼리의 겹침은 여전히 섞입니다
 
 ### 모디파이어  *(고정 순서: Round Corner → Trim → Wiggle)*
 
@@ -234,3 +238,5 @@ vectorImage.DOSlotIntensity(1, 1f, 0.8f);   // 셰이프 간 크로스페이드
 - **저장소:** <https://github.com/ilsang93/unity-vector-motion-graphics-framework>
 - **패키지 id:** `com.ilsang.vmg` · **네임스페이스:** `VMG.Core`, `VMG.UI`,
   `VMG.World`, `VMG.Svg`, `VMG.Text`, `VMG.Tween`
+- **서드파티:** [Clipper2](https://github.com/AngusJohnson/Clipper2) (Boost Software
+  License 1.0), `Runtime/ThirdParty/Clipper2`에 포함 — `Third Party Notices.md` 참고

@@ -21,6 +21,7 @@ namespace VMG.EditorTools
         private SerializedProperty m_Wiggle;
         private SerializedProperty m_FitToRect;
         private SerializedProperty m_Texture;
+        private SerializedProperty m_MergeStrokeOverlaps;
         private SerializedProperty m_SvgFillOverride;
         private SerializedProperty m_SvgStrokeOverride;
 
@@ -36,6 +37,7 @@ namespace VMG.EditorTools
             m_Wiggle = serializedObject.FindProperty("Wiggle");
             m_FitToRect = serializedObject.FindProperty("FitToRect");
             m_Texture = serializedObject.FindProperty("Texture");
+            m_MergeStrokeOverlaps = serializedObject.FindProperty("MergeStrokeOverlaps");
             m_SvgFillOverride = serializedObject.FindProperty("SvgFillOverride");
             m_SvgStrokeOverride = serializedObject.FindProperty("SvgStrokeOverride");
         }
@@ -91,6 +93,7 @@ namespace VMG.EditorTools
             // Material slot inherited from Graphic; Texture is our addition.
             AppearanceControlsGUI();
             EditorGUILayout.PropertyField(m_Texture);
+            EditorGUILayout.PropertyField(m_MergeStrokeOverlaps);
 
             RaycastControlsGUI();
             MaskableControlsGUI();

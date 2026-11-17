@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace VMG.Core
@@ -16,7 +17,31 @@ namespace VMG.Core
         private const int RoundCapSegments = 12;
         private const int RoundJoinSegments = 8;
 
+        // Piece-collection mode (StrokeMerger, Inner / Outer strokes). When
+        // non-null, every Emit* routine records its ribbon / join / cap piece
+        // as a closed polygon here instead of emitting triangles, so the
+        // merged outline reuses the legacy geometry.
+        private static IStrokePieceSink s_sink;
+        private static readonly List<Vector2> s_piece = new List<Vector2>(RoundCapSegments + 2);
+
         public static void Build(VectorPath path, in StrokeStyle style, MeshBuffer mb)
+        {
+            BuildCore(path, style, mb, 0f);
+        }
+
+        /// Emit the stroke as closed polygon pieces (segment ribbons, joins,
+        /// caps) into `sink` instead of mesh triangles. `inset` pulls both
+        /// edges toward the stroke center by that distance, so a later outset
+        /// AA ring of the same width lands the visible edge where the legacy
+        /// stroke's edge was.
+        internal static void BuildPieces(VectorPath path, in StrokeStyle style, float inset, IStrokePieceSink sink)
+        {
+            s_sink = sink;
+            try { BuildCore(path, style, null, inset); }
+            finally { s_sink = null; }
+        }
+
+        private static void BuildCore(VectorPath path, in StrokeStyle style, MeshBuffer mb, float inset)
         {
             if (!style.enabled) return;
             if (path == null || path.Count < 2 || style.width <= 0f) return;
@@ -32,6 +57,8 @@ namespace VMG.Core
                 case StrokeAlignment.Outer: offsetPos = 0f; offsetNeg = -w; break;
                 default: offsetPos = w * 0.5f; offsetNeg = -w * 0.5f; break;
             }
+            offsetPos -= inset;
+            offsetNeg += inset;
 
             Color32 col = style.color;
             float miterLimit = Mathf.Max(1f, style.miterLimit);
@@ -61,6 +88,11 @@ namespace VMG.Core
                 Vector2 a = path.nodes[seg].position;
                 Vector2 b = path.nodes[(seg + 1) % n].position;
                 Vector2 n0 = s_nrm[seg];
+                if (s_sink != null)
+                {
+                    Piece(a + n0 * offsetPos, b + n0 * offsetPos, b + n0 * offsetNeg, a + n0 * offsetNeg);
+                    continue;
+                }
                 int v0 = mb.VertexCount;
                 // Layout: 0=posA, 1=ctrA, 2=negA, 3=posB, 4=ctrB, 5=negB.
                 mb.AddVertex(a + n0 * offsetPos,    col, 0f);
@@ -94,6 +126,12 @@ namespace VMG.Core
                 Vector2 startP = path.nodes[0].position;
                 Vector2 startN = s_nrm[0];
                 Vector2 startDir = new Vector2(startN.y, -startN.x); // back-pointing
+                // NOTE: despite the comments, startDir / endDir point INTO
+                // the stroke, so legacy round / square caps are drawn over
+                // the stroke body (invisible when opaque, a darker patch
+                // under alpha). Kept as-is for the legacy mesh; the merged
+                // path (StrokeMerger) uses the real outward direction.
+                if (s_sink != null) startDir = -startDir;
                 EmitCap(mb, startP, startN, startDir, offsetPos, offsetNeg, col, style.cap);
 
                 // End cap.
@@ -101,6 +139,7 @@ namespace VMG.Core
                 Vector2 endP = path.nodes[n - 1].position;
                 Vector2 endN = s_nrm[lastSeg];
                 Vector2 endDir = new Vector2(-endN.y, endN.x); // forward-pointing
+                if (s_sink != null) endDir = -endDir;
                 EmitCap(mb, endP, endN, endDir, offsetPos, offsetNeg, col, style.cap);
             }
         }
@@ -143,6 +182,12 @@ namespace VMG.Core
                                       Vector2 posA, Vector2 negA, Vector2 posB, Vector2 negB,
                                       float cross, Color32 col)
         {
+            if (s_sink != null)
+            {
+                if (cross > 0f) Piece(negA, p, negB);
+                else Piece(posA, posB, p);
+                return;
+            }
             int c = mb.VertexCount;
             if (cross > 0f)
             {
@@ -213,6 +258,7 @@ namespace VMG.Core
             // Triangle pair filling the outer wedge: (outerA, spike, p) and
             // (spike, outerB, p). Winding chosen so the wedge faces the same
             // way for either bend direction.
+            if (s_sink != null) { Piece(outerA, spike, outerB, p); return; }
             int c = mb.VertexCount;
             // outerA/spike/outerB sit on the outer rail (distance=0); p is
             // the corner pivot on the polyline (distance=1).
@@ -244,6 +290,18 @@ namespace VMG.Core
             else if (delta < -Mathf.PI) delta += Mathf.PI * 2f;
 
             int seg = Mathf.Max(2, RoundJoinSegments);
+            if (s_sink != null)
+            {
+                s_piece.Clear();
+                s_piece.Add(p);
+                for (int s = 0; s <= seg; s++)
+                {
+                    float t = aStart + delta * (s / (float)seg);
+                    s_piece.Add(p + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r);
+                }
+                s_sink.AddPiece(s_piece);
+                return;
+            }
             int pivot = mb.VertexCount;
             // Pivot at the polyline corner — distance=1; arc samples sit on
             // the outer rail — distance=0.
@@ -276,6 +334,7 @@ namespace VMG.Core
                 float ext = (offPos - offNeg) * 0.5f;
                 Vector2 extPos = vPos + outwardDir * ext;
                 Vector2 extNeg = vNeg + outwardDir * ext;
+                if (s_sink != null) { Piece(vPos, extPos, extNeg, vNeg); return; }
                 int c = mb.VertexCount;
                 // All four corners sit on the visible boundary — square caps
                 // extend the rectangle outward by half the stroke width, so
@@ -300,6 +359,18 @@ namespace VMG.Core
             float delta = Vector2.Dot(midDir, outwardDir) >= 0f ? Mathf.PI : -Mathf.PI;
 
             int seg = Mathf.Max(3, RoundCapSegments);
+            if (s_sink != null)
+            {
+                // Half-disc: the arc's closing chord passes through center.
+                s_piece.Clear();
+                for (int s = 0; s <= seg; s++)
+                {
+                    float t = aStart + delta * (s / (float)seg);
+                    s_piece.Add(center + new Vector2(Mathf.Cos(t), Mathf.Sin(t)) * r);
+                }
+                s_sink.AddPiece(s_piece);
+                return;
+            }
             int pivot = mb.VertexCount;
             // Center of the cap disc sits on the polyline — distance=1; arc
             // samples sit on the outer rail — distance=0.
@@ -317,5 +388,24 @@ namespace VMG.Core
                 }
             }
         }
+
+        private static void Piece(Vector2 a, Vector2 b, Vector2 c)
+        {
+            s_piece.Clear(); s_piece.Add(a); s_piece.Add(b); s_piece.Add(c);
+            s_sink.AddPiece(s_piece);
+        }
+
+        private static void Piece(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            s_piece.Clear(); s_piece.Add(a); s_piece.Add(b); s_piece.Add(c); s_piece.Add(d);
+            s_sink.AddPiece(s_piece);
+        }
+    }
+
+    /// Receives StrokeMeshBuilder's pieces in collection mode. Pieces may
+    /// arrive in either winding; the sink normalizes them.
+    internal interface IStrokePieceSink
+    {
+        void AddPiece(List<Vector2> polygon);
     }
 }

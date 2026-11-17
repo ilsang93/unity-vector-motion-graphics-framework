@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.48.0] - 2026-11-18
+
+**Overlap-free semi-transparent strokes.** A stroke mesh used to be one
+independent ribbon per segment plus separate join and cap pieces, and every
+SVG sub-shape was stroked on its own. Opaque that is invisible; with alpha,
+every overlap blends twice — dark knots at joins, bright dots on round
+strokes, dark crossings where two sub-shapes intersect.
+
+### Added
+
+- **`MergeStrokeOverlaps`** on `VectorImageGraphic` and `VectorSpriteRenderer`
+  (Rendering section, **off by default** — off is the unchanged legacy mesh).
+  When on, every stroke is turned into its outline polygon, all outlines that
+  share a final color are unioned, the result is triangulated once and the AA
+  ring sits on the final outline only. Within one renderer no pixel of a
+  same-colored stroke region is covered twice (the SVG group-opacity look).
+  - Center strokes (every SVG stroke) are outlined by Clipper2's offsetter;
+    Inner / Outer strokes reuse the legacy ribbon / join / cap pieces and
+    union them.
+  - Vertex contract unchanged: UV0 = position placeholder normalized to the
+    bounds / viewBox, UV1.x = AA distance (1 interior, 0 edge). Vertex count
+    is usually lower than legacy (skull icon 5802 -> 2859).
+  - Trim, Round Corners and Wiggle run before the merge as before; gradients
+    are baked after it (radial stroke gradients switch the triangulator to
+    constrained Delaunay for better-shaped triangles); with Depth on, the
+    merged stroke is promoted onto both faces like the legacy one.
+  - With an `SvgAsset` on `VectorSpriteRenderer`, merged strokes now draw
+    after all fills (UGUI already did).
+- `StrokeMerger` (`VMG.Core`) — the builder behind the toggle, usable from code.
+- Vendored **Clipper2** (Boost Software License 1.0) under
+  `Runtime/ThirdParty/Clipper2`, namespace `VMG.ThirdParty.Clipper2Lib`. See
+  `Third Party Notices.md`.
+
+### Known limits
+
+- Different-colored strokes, and a shape's fill vs. its own stroke, still
+  blend over each other (needs a difference pass that brings conflation
+  seams — deferred).
+- Center miter joins past the miter limit are squared off (Clipper) instead
+  of beveled.
+- `VectorText` renderers are not wired to the toggle yet.
+- Cost: a union per rebuild. Measured (editor, Release code optimization,
+  per rebuild, legacy -> merged): skull icon 0.69 -> 9.5 ms, magnet icon
+  0.34 -> 6.8 ms, 64-segment circle 0.19 -> ~1.3-5.5 ms (noisy). Fine for
+  shapes that rebuild on change; expensive for per-frame Trim/Wiggle on
+  dense SVGs.
+
+### Found, not changed
+
+- Legacy round / square caps are emitted on the wrong side (into the stroke
+  body), so they never extend the stroke — invisible when opaque, a darker
+  patch under alpha. The legacy mesh keeps that behavior; merged strokes use
+  correct caps, so caps are the main opaque-outline difference between the
+  two modes.
+
 ## [0.47.0] - 2026-09-21
 
 **SVG assets become first-class** — modifiers, color overrides, and mid-path

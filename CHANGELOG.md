@@ -11,7 +11,9 @@ strokes, dark crossings where two sub-shapes intersect.
 ### Added
 
 - **`MergeStrokeOverlaps`** on `VectorImageGraphic` and `VectorSpriteRenderer`
-  (Rendering section, **off by default** — off is the unchanged legacy mesh).
+  (Rendering section, **on by default** — including existing components, which
+  pick up the new field's default on load; turn it off for the cheaper legacy
+  per-segment mesh).
   When on, every stroke is turned into its outline polygon, all outlines that
   share a final color are unioned, the result is triangulated once and the AA
   ring sits on the final outline only. Within one renderer no pixel of a
@@ -47,13 +49,16 @@ strokes, dark crossings where two sub-shapes intersect.
   shapes that rebuild on change; expensive for per-frame Trim/Wiggle on
   dense SVGs.
 
-### Found, not changed
+### Fixed
 
-- Legacy round / square caps are emitted on the wrong side (into the stroke
-  body), so they never extend the stroke — invisible when opaque, a darker
-  patch under alpha. The legacy mesh keeps that behavior; merged strokes use
-  correct caps, so caps are the main opaque-outline difference between the
-  two modes.
+- **Round / Square line caps were drawn on the wrong side.** The cap
+  direction pointed into the stroke, so caps sat on top of the stroke body
+  instead of past its ends — invisible when opaque, a darker patch under
+  alpha. Open strokes with Round / Square caps are now longer by half the
+  stroke width at each end, as the cap style says.
+- **Square caps rendered fully transparent** under the SDF shaders: all four
+  cap vertices carried AA distance 0. The cap is now a fan from a
+  centerline vertex (distance 1).
 
 ## [0.47.0] - 2026-09-21
 

@@ -125,21 +125,18 @@ namespace VMG.Core
                 // Start cap: at path.nodes[0], outgoing edge dir = s_nrm[0]'s perpendicular.
                 Vector2 startP = path.nodes[0].position;
                 Vector2 startN = s_nrm[0];
-                Vector2 startDir = new Vector2(startN.y, -startN.x); // back-pointing
-                // NOTE: despite the comments, startDir / endDir point INTO
-                // the stroke, so legacy round / square caps are drawn over
-                // the stroke body (invisible when opaque, a darker patch
-                // under alpha). Kept as-is for the legacy mesh; the merged
-                // path (StrokeMerger) uses the real outward direction.
-                if (s_sink != null) startDir = -startDir;
+                // Left-normal n = (-d.y, d.x), so (-n.y, n.x) = -d points
+                // back out of the path's start. (Before 0.48.0 these two
+                // directions were swapped, so caps were drawn over the stroke
+                // body instead of past its ends.)
+                Vector2 startDir = new Vector2(-startN.y, startN.x); // back-pointing
                 EmitCap(mb, startP, startN, startDir, offsetPos, offsetNeg, col, style.cap);
 
                 // End cap.
                 int lastSeg = segCount - 1;
                 Vector2 endP = path.nodes[n - 1].position;
                 Vector2 endN = s_nrm[lastSeg];
-                Vector2 endDir = new Vector2(-endN.y, endN.x); // forward-pointing
-                if (s_sink != null) endDir = -endDir;
+                Vector2 endDir = new Vector2(endN.y, -endN.x); // forward-pointing
                 EmitCap(mb, endP, endN, endDir, offsetPos, offsetNeg, col, style.cap);
             }
         }
@@ -336,13 +333,16 @@ namespace VMG.Core
                 Vector2 extNeg = vNeg + outwardDir * ext;
                 if (s_sink != null) { Piece(vPos, extPos, extNeg, vNeg); return; }
                 int c = mb.VertexCount;
-                // All four corners sit on the visible boundary — square caps
-                // extend the rectangle outward by half the stroke width, so
-                // every corner is at the outer rail. distance=0 across.
+                // Fan from the base midpoint on the stroke's centerline
+                // (distance=1, matching the ribbon's center rail) to the four
+                // corners on the visible boundary (distance=0). With every
+                // vertex at 0 the SDF shader would fade the whole cap out.
+                mb.AddVertex((vPos + vNeg) * 0.5f, col, 1f);
                 mb.AddVertex(vPos, col, 0f); mb.AddVertex(extPos, col, 0f);
                 mb.AddVertex(extNeg, col, 0f); mb.AddVertex(vNeg, col, 0f);
                 mb.AddTriangle(c, c + 1, c + 2);
                 mb.AddTriangle(c, c + 2, c + 3);
+                mb.AddTriangle(c, c + 3, c + 4);
                 return;
             }
 

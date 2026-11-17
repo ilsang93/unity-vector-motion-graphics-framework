@@ -58,7 +58,12 @@ namespace VMG.World
         // positions, so the shader applies Trim (see WantsGpuTrim).
         private bool m_GpuTrimBuilt;
         private bool m_PrevGpuTrim;
-        private bool m_TrimBlockTouched;
+        // The default material this renderer created for itself. GPU trim
+        // writes the window straight into it, never into a
+        // MaterialPropertyBlock: any block on a MeshRenderer zeroes URP
+        // Sprite Shader Graphs' per-draw sprite data and collapses the mesh.
+        private Material m_OwnedMaterial;
+        private const string OwnedMaterialName = "VMG_VectorSprite_Default";
 
         // Dirty-flag snapshot. Update compares the current mesh inputs
         // against this and only calls Rebuild when something changed —
@@ -86,6 +91,14 @@ namespace VMG.World
             EnsureRefs();
             m_HasSnapshot = false;
             Rebuild();
+        }
+
+        private void OnDestroy()
+        {
+            if (m_OwnedMaterial == null) return;
+            if (Application.isPlaying) Destroy(m_OwnedMaterial);
+            else DestroyImmediate(m_OwnedMaterial);
+            m_OwnedMaterial = null;
         }
 
         private void OnDisable()
@@ -164,17 +177,18 @@ namespace VMG.World
         // GPU trim: the stroke mesh is built once, untrimmed, with each
         // vertex's arc position in UV1.y, and the VMG SDF shader cuts it from
         // _VMGTrim — so animating start / end / offset costs no rebuild.
-        // Falls back to the CPU TrimPathModifier when strokes are merged
-        // (a union has no per-vertex arc position) or when the material's
-        // shader doesn't read _VMGTrim (custom materials).
+        // Only on the default material this renderer owns (the window is
+        // written into it). Assigned / custom materials, merged strokes (no
+        // per-vertex arc position) and Round / Square caps use the CPU
+        // TrimPathModifier.
         private bool WantsGpuTrim()
         {
             if (!Trim.Enabled || MergeStrokeOverlaps) return false;
             // The shader cuts the stroke square; the CPU trim re-caps the
             // cut ends with the stroke's own cap. Only Butt looks the same.
             if (SvgAsset != null ? !SvgAsset.AllStrokeCapsButt() : Stroke.cap != LineCap.Butt) return false;
-            var mat = m_Renderer != null ? m_Renderer.sharedMaterial : null;
-            return mat != null && mat.HasProperty(s_TrimID);
+            if (m_Renderer == null || m_OwnedMaterial == null) return false;
+            return m_Renderer.sharedMaterial == m_OwnedMaterial && m_OwnedMaterial.HasProperty(s_TrimID);
         }
 
         private bool TrimDirty()
@@ -185,19 +199,12 @@ namespace VMG.World
             return !VectorRendererEquality.Same(m_PrevTrim, Trim);
         }
 
-        // Pushes the trim window to the shader. Reads the renderer's block
-        // first so properties other scripts set on it survive.
+        // Pushes the trim window into the owned default material.
         private void ApplyTrim()
         {
-            if (m_Renderer == null) return;
-            if (!m_GpuTrimBuilt && !m_TrimBlockTouched) return;
+            if (m_OwnedMaterial == null || !m_OwnedMaterial.HasProperty(s_TrimID)) return;
             Vector4 v = m_GpuTrimBuilt ? new Vector4(Trim.start, Trim.end, Trim.offset, 1f) : new Vector4(0f, 1f, 0f, 0f);
-            if (m_PropertyBlock == null) m_PropertyBlock = new MaterialPropertyBlock();
-            m_Renderer.GetPropertyBlock(m_PropertyBlock);
-            if (m_TrimBlockTouched && m_PropertyBlock.GetVector(s_TrimID) == v) return;
-            m_PropertyBlock.SetVector(s_TrimID, v);
-            m_Renderer.SetPropertyBlock(m_PropertyBlock);
-            m_TrimBlockTouched = true;
+            if (m_OwnedMaterial.GetVector(s_TrimID) != v) m_OwnedMaterial.SetVector(s_TrimID, v);
         }
 
         void CaptureSnapshot()
@@ -257,16 +264,29 @@ namespace VMG.World
             {
                 if (m_Renderer.sharedMaterial != Material) m_Renderer.sharedMaterial = Material;
             }
-            else if (m_Renderer.sharedMaterial == null)
+            else
             {
-                // Default to the package's SDF-AA shader so vector edges
-                // antialias regardless of camera distance. Falls back to
-                // Sprites/Default if the shader was stripped out (e.g.
-                // missing Always Included entry in build settings) — the
-                // mesh still renders, just without AA.
-                var shader = Shader.Find("VMG/World/VectorSDF");
-                if (shader == null) shader = Shader.Find("Sprites/Default");
-                if (shader != null) m_Renderer.sharedMaterial = new Material(shader);
+                var current = m_Renderer.sharedMaterial;
+                // A default material made by ANOTHER renderer (this object was
+                // duplicated / instantiated from one) would share its trim
+                // window — make our own. Anything else a script put on the
+                // renderer is left alone.
+                bool foreignDefault = current != null && current != m_OwnedMaterial && current.name == OwnedMaterialName;
+                if (current != null && !foreignDefault) return;
+                if (m_OwnedMaterial == null)
+                {
+                    // Default to the package's SDF-AA shader so vector edges
+                    // antialias regardless of camera distance. Falls back to
+                    // Sprites/Default if the shader was stripped out (e.g.
+                    // missing Always Included entry in build settings) — the
+                    // mesh still renders, just without AA. DontSave: it is
+                    // recreated per renderer on load, never shared via a scene.
+                    var shader = Shader.Find("VMG/World/VectorSDF");
+                    if (shader == null) shader = Shader.Find("Sprites/Default");
+                    if (shader == null) return;
+                    m_OwnedMaterial = new Material(shader) { name = OwnedMaterialName, hideFlags = HideFlags.DontSave };
+                }
+                m_Renderer.sharedMaterial = m_OwnedMaterial;
             }
         }
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.49.1] - 2026-11-18
+
+### Fixed
+
+- **`VectorSpriteRenderer` no longer attaches a MaterialPropertyBlock for
+  trim.** 0.49.0 passed the GPU trim window through the renderer's property
+  block — and kept a block on renderers that had fallen back to CPU trim. Any
+  property block on a MeshRenderer zeroes URP **Sprite** Shader Graphs'
+  per-draw sprite data (`unity_SpriteProps` / `unity_SpriteColor`), which
+  collapses the mesh to a point: such renderers disappeared entirely.
+  (Witch's Lounge magic circles, `JudgeTrailerOutlineShader`.)
+
+### Changed
+
+- GPU trim now runs only on the **default material the renderer creates for
+  itself** (VMG `Material` field empty, nothing else assigned to the
+  MeshRenderer); the trim window is written into that material directly. Any
+  assigned or script-swapped material — including custom shaders that
+  declare `_VMGTrim` — uses CPU trim. (0.49.0's "custom shader with `_VMGTrim`
+  gets GPU trim" no longer applies; an explicit opt-in for per-renderer custom
+  materials may follow.)
+- The renderer-created default material is now named
+  `VMG_VectorSprite_Default`, marked `DontSave` (recreated per renderer on
+  load instead of being embedded in the scene), and a duplicated / instantiated
+  renderer that inherited another renderer's default material creates its own.
+  Scenes saved before 0.49.1 keep their embedded default material and use CPU
+  trim until it is cleared from the MeshRenderer.
+- `VectorImageGraphic` is unchanged (it never used property blocks).
+
 ## [0.49.0] - 2026-11-18
 
 **GPU Trim Paths.** Animating Trim used to rebuild the whole stroke mesh on

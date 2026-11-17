@@ -11,9 +11,11 @@ strokes, dark crossings where two sub-shapes intersect.
 ### Added
 
 - **`MergeStrokeOverlaps`** on `VectorImageGraphic` and `VectorSpriteRenderer`
-  (Rendering section, **on by default** — including existing components, which
-  pick up the new field's default on load; turn it off for the cheaper legacy
-  per-segment mesh).
+  (Rendering section, **off by default** — off is the legacy per-segment mesh).
+  Enable it per renderer where semi-transparent strokes overlap. Keep it off on
+  dense paths whose Trim / Wiggle changes every frame: the union runs on every
+  rebuild (a 27-node bezier FreePath with per-frame Trim measured 4.7 ms ->
+  24 ms per frame, editor Debug).
   When on, every stroke is turned into its outline polygon, all outlines that
   share a final color are unioned, the result is triangulated once and the AA
   ring sits on the final outline only. Within one renderer no pixel of a

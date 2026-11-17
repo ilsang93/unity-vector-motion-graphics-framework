@@ -36,8 +36,8 @@ namespace VMG.World
         public Material Material;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Applied via MaterialPropertyBlock so the shared material stays shared. Object reference: NOT keyframable from AnimationClip — swap via script.")]
         public Texture Texture;
-        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). With an SvgAsset, merged strokes draw after all fills (as in UGUI). Costs a polygon union per rebuild — measure with Wiggle on. Off = legacy per-segment mesh (cheaper, overlaps blend twice under alpha).")]
-        public bool MergeStrokeOverlaps = true;
+        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). With an SvgAsset, merged strokes draw after all fills (as in UGUI). Costs a polygon union per rebuild — avoid on dense paths whose Trim / Wiggle changes every frame. Off = legacy per-segment mesh (cheaper, overlaps blend twice under alpha).")]
+        public bool MergeStrokeOverlaps;
         [Tooltip("Sorting layer ID for the underlying MeshRenderer. Keyframable (integer).")]
         public int SortingLayerID;
         [Tooltip("Order in sorting layer. Keyframable.")]

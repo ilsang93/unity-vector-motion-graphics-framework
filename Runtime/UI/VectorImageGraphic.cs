@@ -31,8 +31,8 @@ namespace VMG.UI
         public bool FitToRect = true;
         [Tooltip("Texture sampled across the renderer's bounds (UV 0..1). Object reference: NOT keyframable from AnimationClip — swap via script.")]
         public Texture Texture;
-        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). Costs a polygon union per rebuild — measure with Wiggle on. Off = legacy per-segment mesh (cheaper, overlaps blend twice under alpha).")]
-        public bool MergeStrokeOverlaps = true;
+        [Tooltip("Build strokes as one merged outline per color instead of overlapping segment / join / cap pieces, so a semi-transparent stroke never blends twice over itself or over another same-colored stroke (SVG group-opacity look). Costs a polygon union per rebuild — avoid on dense paths whose Trim / Wiggle changes every frame. Off = legacy per-segment mesh (cheaper, overlaps blend twice under alpha).")]
+        public bool MergeStrokeOverlaps;
 
         private readonly ShapePipeline m_Pipeline = new ShapePipeline();
         private readonly MeshBuffer m_StrokeBuf = new MeshBuffer();
